@@ -1,0 +1,12 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+python-logging-base = {git = "https://github.com/praecipula/python_logging_base.git"}
+
+[requires]
+python_version = "3.14"
+
+[dev-packages]
