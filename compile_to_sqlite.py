@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import json
-from lxml import etree
+from lxml import etree, html
 import sqlite3
 from datetime import datetime
 import re
@@ -11,7 +11,10 @@ import argparse
 
 
 here = Path(".")
-jsonfiles = here.glob("*.json")
+jsonfiles = here.glob("./input_scrapes/KSFO/*.json")
+
+# One unified weather database. Each data is in the same table but split by station_code
+# This means we have to have a unique index, hmm. Better to shard to separate dbs by station?
 
 db = sqlite3.connect("./weather.db")
 
@@ -20,7 +23,7 @@ cursor = db.cursor()
 cursor.execute("""CREATE TABLE IF NOT EXISTS weather (
     id INTEGER PRIMARY KEY,
     station_code TEXT,
-    datetime_dt TEXT UNIQUE,
+    datetime_dt TEXT,
     temp_f INTEGER,
     dewpoint_f INTEGER,
     rel_humidity_pct INTEGER,
@@ -41,6 +44,33 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS weather (
     twentyfourhr_min_f INTEGER
   )""")
 
+cursor.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_stn_time ON weather (station_code, datetime_dt)
+  """)
+
+
+dbFieldToHeaderStringMapping = {
+    'datetime_dt': ['Date/Time\xa0(L)'],
+    'temp_f': ['Temp.\xa0(°F)'],
+    'dewpoint_f': ['DewPoint(°F)'],
+    'rel_humidity_pct': ['RelativeHumidity(%)'],
+    'heat_index_f': ['HeatIndex(°F)'],
+    'wind_chill_f': ['WindChill(°F)'],
+    'wind_direction_t': ['WindDirection\xa0'],
+    'wind_speed_mph': ['WindSpeed(mph)'],
+    'wind_gust_mph': [], # This is inferred from the value of the wind speed column, so we don't have a header parsed for it.
+    'visibility_m': ['Visibility\xa0(miles)'],
+    'weather_t': ['Weather\xa0\xa0'],   
+    'clouds_t': ['Clouds\xa0(x100 ft)'],
+    'pressure_sea_mb': ['Sea LevelPressure(mb)'],
+    'pressure_inhg': ['StationPressure(in Hg)'],
+    'altimiter_setting_inhg': ['AltimeterSetting(in Hg)'],
+    'sixhr_max_f': ['6 HrMax(°F)'],
+    'sixhr_min_f': ['6 HrMin(°F)'],
+    'twentyfourhr_max_f': ['24 HrMax(°F)'],
+    'twentyfourhr_min_f': ['24 HrMin(°F)']
+
+}
 
 def parse_to_isodatetime(file_dt, date):
     # Jank, but works to set the year.
@@ -54,7 +84,9 @@ def parse_to_isodatetime(file_dt, date):
     if file_dt.month <= 6:
         if dt_no_year.month > 6:
             inferred_year = file_dt.year - 1
-    return datetime(inferred_year, dt_no_year.month, dt_no_year.day, dt_no_year.hour, dt_no_year.minute).isoformat()
+    # This seems awkward, but the date above doesn't handle leap day correctly, so we reparse from scratch with the inferred year rather than just accepting the date as parsed.
+    # https://github.com/python/cpython/issues/70647.
+    return datetime.strptime(str(inferred_year) + " " + date, "%Y %b %d, %I:%M %p").isoformat()
 
 
 def str_or_none(element):
@@ -92,16 +124,38 @@ def windspeed_parse(element):
         g = match.groups()
         return (int(g[0]), int(g[1]))
 
+
+def create_entry_mapping(json_obj):
+    # Process header row to know what fields to map
+    header_row = json_obj[0]['rows'][0]
+    #cleaned = header_row.replace("&nbsp;", "&#160;")
+    root = html.fromstring("<root>" + header_row + "</root>")
+    elements = root.xpath("//th")
+    mapping = []
+    for i, element in enumerate(elements):
+        found = False
+        for db_field, header_strings in dbFieldToHeaderStringMapping.items():
+            if element.xpath("string()") in header_strings:
+                found = True
+                mapping.append((db_field))
+                break
+        if not found:
+            import pdb; pdb.set_trace()
+    return mapping
+
 def process(verbosity):
 
     rows_skipped = 0
     rows_inserted = 0
 
     for file in jsonfiles:
-        # Go ahead and infer the year from the filename
-        file_dt = datetime.fromisoformat(file.stem)
+        # Go ahead and infer the year from the filename.
+        # Note that on a mac, downloading the file with a colon in the name causes it to be replaced with an underscore, so we should replace this back in the string. Since there's natively no underscore in the date, this should effectively no-op on Linux.
+        file_dt = datetime.fromisoformat(file.stem.replace("_", ":"))
         with open(file, 'r') as f:
             obj = json.load(f)
+        field_mapping = create_entry_mapping(obj)
+        station_code = file.parent.name
         for row in obj[0]['rows'][1:]:
             # Replace html with their character codes (simplest way to avoid loading a dtd from the network)
             cleaned = row.replace("&nbsp;", "&#160;")
@@ -125,58 +179,41 @@ def process(verbosity):
                     pdb.set_trace()
                 raise Exception("We expect a consistent number of elements, even if blank")
             try:
-                station_code = "KSFO"
-                datetime_dt = parse_to_isodatetime(file_dt, elements[0].text)
-                temp_f = int_or_none(elements[1])
-                dewpoint_f = int_or_none(elements[2])
-                rel_humidity_pct = int_or_none(elements[3])
-                heat_index_f = int_or_none(elements[4])
-                wind_chill_f = int_or_none(elements[5])
-                wind_direction_t = str_or_none(elements[6])
-                wind_speed_mph, wind_gust_mph = windspeed_parse(elements[7])
-                visibility_m = float_or_none(elements[8])
-                weather_t = str_or_none(elements[9])
-                clouds_t = str_or_none(elements[10])
-                pressure_sea_mb = float_or_none(elements[11])
-                pressure_inhg = float_or_none(elements[12])
-                altimiter_setting_inhg = float_or_none(elements[13])
-                sixhr_max_f = int_or_none(elements[14])
-                sixhr_min_f = int_or_none(elements[15])
-                twentyfourhr_max_f = int_or_none(elements[16]) 
-                twentyfourhr_min_f = int_or_none(elements[17])
+                print(field_mapping)
+                idx = lambda field: field_mapping.index(field)
+                normalized_values = {
+                    'station_code': station_code,
+                    'datetime_dt': parse_to_isodatetime(file_dt, elements[idx('datetime_dt')].text),
+                    'temp_f': int_or_none(elements[idx('temp_f')]),
+                    'dewpoint_f': int_or_none(elements[idx('dewpoint_f')]),
+                    'rel_humidity_pct': int_or_none(elements[idx('rel_humidity_pct')]),
+                    'heat_index_f': int_or_none(elements[idx('heat_index_f')]),
+                    'wind_chill_f': int_or_none(elements[idx('wind_chill_f')]),
+                    'wind_direction_t': str_or_none(elements[idx('wind_direction_t')]),
+                    'wind_speed_mph': windspeed_parse(elements[idx('wind_speed_mph')])[0],
+                    'wind_gust_mph': windspeed_parse(elements[idx('wind_speed_mph')])[1], # Note this special case!
+                    'visibility_m': float_or_none(elements[idx('visibility_m')]),
+                    'weather_t': str_or_none(elements[idx('weather_t')]),
+                    'clouds_t': str_or_none(elements[idx('clouds_t')]),
+                    'pressure_sea_mb': float_or_none(elements[idx('pressure_sea_mb')]),
+                    'pressure_inhg': float_or_none(elements[idx('pressure_inhg')]),
+                    'altimiter_setting_inhg': float_or_none(elements[idx('altimiter_setting_inhg')]),
+                    'sixhr_max_f': int_or_none(elements[idx('sixhr_max_f')]),
+                    'sixhr_min_f': int_or_none(elements[idx('sixhr_min_f')]),
+                    'twentyfourhr_max_f': int_or_none(elements[idx('twentyfourhr_max_f')]),
+                    'twentyfourhr_min_f': int_or_none(elements[idx('twentyfourhr_min_f')])
+                }
             except Exception as e:
                 if verbosity > 0:
                     pdb.set_trace()
                 raise e
-            values_tuple = (
-                    None,
-                    station_code,
-                    datetime_dt,
-                    temp_f,
-                    dewpoint_f,
-                    rel_humidity_pct,
-                    heat_index_f,
-                    wind_chill_f,
-                    wind_direction_t,
-                    wind_speed_mph,
-                    wind_gust_mph,
-                    visibility_m,
-                    weather_t,
-                    clouds_t,
-                    pressure_sea_mb,
-                    pressure_inhg,
-                    altimiter_setting_inhg,
-                    sixhr_max_f,
-                    sixhr_min_f,
-                    twentyfourhr_max_f,
-                    twentyfourhr_min_f
-                    )
-            if verbosity > 2:
-                print(values_tuple)
-            cursor.execute("""
-            INSERT INTO weather VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (datetime_dt) DO NOTHING
-            """, values_tuple)
+            
+            print(f"keys_stanza: {keys_stanza}")
+            print(f"values_stanza: {values_stanza}")
+            cursor.execute(f"""
+            INSERT INTO weather {keys_stanza} VALUES {values_stanza}
+            ON CONFLICT (station_code, datetime_dt) DO NOTHING
+            """, tuple(normalized_values.values()))
             db.commit()
             if cursor.rowcount == 0:
                 if verbosity > 1:
