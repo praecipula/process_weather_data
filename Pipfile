@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 python-logging-base = {git = "https://github.com/praecipula/python_logging_base.git"}
+lxml = "*"
 
 [requires]
 python_version = "3.14"
