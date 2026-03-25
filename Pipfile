@@ -8,6 +8,6 @@ python-logging-base = {git = "https://github.com/praecipula/python_logging_base.
 lxml = "*"
 
 [requires]
-python_version = "3.14"
+python_version = "3.11"
 
 [dev-packages]
