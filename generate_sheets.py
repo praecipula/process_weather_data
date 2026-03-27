@@ -62,6 +62,7 @@ def fullRowsBetweenDates(start_date, end_date):
     cursor.execute(query, (start_date, end_date))
     return cursor.fetchall()
 
+
 class DayOverDay:
     def __init__(self):
         self._days = []
@@ -119,8 +120,6 @@ class DayOverDay:
 
                 
 
-
-
 class DayOverDayDerivative:
     def __init__(self):
         pass
@@ -141,11 +140,29 @@ class DayOverDayIntegral:
     def to_csv(self):
         pass
 
+class ImputeRowV1:
+    def __init__(self, db_row):
+        self._db_row = db_row
+
+    def imputed(self):
+        breakpoint()
+
+class MLTraining:
+    def __init__(self):
+        pass
+
+    def process(self):
+        pass
+
+    def to_csv(self):
+        pass
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-y', action='store_true', help='Process day-over-day sheet')
     parser.add_argument('-d', action='store_true', help='Process day-over-day derivative sheet')
-    parser.add_argument('-i', action='store_true', help='Process day-over-day integral sheet')
+    parser.add_argument('-i', action='store_true', help='Process day-over-day integral sheet')    
+    parser.add_argument('-t', '--train', action='store_true', help='Train a neural network model on the data')
     args = parser.parse_args()
 
     processors = []
@@ -159,6 +176,10 @@ if __name__ == "__main__":
     if args.i:
         LOG.trace("Day over day integral flag given")
         processors.append(DayOverDayIntegral())
+    if args.train:
+        LOG.trace("Training a neural network model")
+        processors.append(MLTraining())
+
 
 
     for p in processors:
