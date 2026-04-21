@@ -35,10 +35,15 @@ class LinearInterpolated:
     """
     Decorator that interpolates linearly between two values of this underlying field.
 
-    * If there is no "previous" entry for this same station / time that has a value for this field, interpolate backwards from next 2
-    * If there is no "next" entry for this same station / time that has a value for this field, interpolate forwards from the last 2
+    This decorator is applicable to any smooth, continuous, differentiable function - basically any physical pattern that happens in weather (approximately, chaos theory be damned). This is *not* applicable for some fields that report e.g. the wind direction (which is presented as a classifier field and we need to model this differently) or summary fields like "24hr max temp" which aren't smooth entries, but rather are a summary report.
+
+    This, especially with extrapolation from previous values, implies that there is a hidden "true" value not being reported by the weather station for that point in time. Filling in the value is then intended to represent this hidden model, and if we could have perfect knowledge, the interpolation and extrapolation would converge.
+
+    * If there is a value for this field, the result is that value.
+    * If there is no "previous" entry for this same station / time that has a value for this field, extrapolate backwards from next 2
+    * If there is no "next" entry for this same station / time that has a value for this field, extrapolate forwards from the last 2
     * If there is both, interpolate between these.
-    * If there is neither, return None.
+    * If there is neither, return None. Note that this means it *is* possible to have a None return value from this interpolation.
     """
 
     def __init__(self, param_name: str):
@@ -47,9 +52,8 @@ class LinearInterpolated:
     def __call__(self, func):
         @functools.wraps(func)
         def interpolate(*args, **kwargs):
-            print("called")
             decorated = args[0]
-            dec_value = getattr(decorated, self._param_name)
+            dec_value = func(decorated) #Ironically, the only time we call the underlying function.
             if dec_value is not None:
                 return dec_value
             # Noteworthy: we use the session *from the decorated object* as this session will (at runtime) be a real session, but during testing it's a synthetic / test harness one. This way we can inspect it instead of having to e.g. pass a factory around everywhere.
@@ -102,6 +106,49 @@ class LinearInterpolated:
                 return extrap
         return interpolate
 
+class PreviousValueInterpolated:
+    """
+    Decorator that interpolates by using the last known value for this field.
+
+    This decorator is applicable to any value where the report stops simply repeating a previous value (e.g. "24hr max" which isn't represented in 5-minutely-snapshots, but only at regular times) and for non-reported classifier fields (e.g. "weather" status, or even wind direction).
+
+    This can be considered a degenerate case of nearest neighbor interpolation, but it's important to note that we have a stronger case for "this stayed the same as last time" vs. interpolating backwards from a future value.
+
+    Remember, ultimately the network is intended to be trained to predict the most up-to-date value for a given point in time, so we can't interpolate backwards for new evaluations. For discontinuous classifier fields, then, we don't have a hidden value that we're estimating, things could vary wildly in the middle and so this is meant more for "we only know when we measure it" type fields.
+
+    * If there is a value for this field, the result is that value.
+    * If there is a previous entry for this same station / time that has a value for this field, return that value.
+    * If there is no "previous" entry for this same station / time that has a value for this field, it is null - there is no information whatsoever.
+
+    """
+
+    def __init__(self, param_name: str):
+        self._param_name = param_name
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def interpolate(*args, **kwargs):
+            decorated = args[0]
+            dec_value = func(decorated) #Ironically, the only time we call the underlying function.
+            if dec_value is not None:
+                return dec_value
+            # Noteworthy: we use the session *from the decorated object* as this session will (at runtime) be a real session, but during testing it's a synthetic / test harness one. This way we can inspect it instead of having to e.g. pass a factory around everywhere.
+            session = inspect(decorated).session
+            column_name = getattr(WeatherModel, self._param_name)
+
+            def get_previous_row(row, column_name):
+                previous_row_statement = select(WeatherModel).where(
+                    WeatherModel.station_code == row.station_code,
+                    WeatherModel.datetime_dt < row.datetime_dt,
+                    column_name != None
+                ).order_by(WeatherModel.datetime_dt.desc()).limit(1)
+                return session.scalars(previous_row_statement).first()
+
+            previous_row = get_previous_row(decorated, column_name)
+            previous_value = None if previous_row is None else getattr(previous_row, self._param_name)
+            return previous_value
+        return interpolate
+
 
 class WeatherModel(Base):
     """
@@ -142,10 +189,13 @@ class WeatherModel(Base):
 
     @LinearInterpolated("heat_index_f")
     def interp_heat_index_f(self):
-        pass
+        # By convention, the interpolation functions should return their underlying value for use in the interpoator. As this value for interpolatable fields might be null, we trust that the interpolator will do its best to make that null a not-null value.
+        return self.heat_index_f
     
     @LinearInterpolated("pressure_inhg")
     def interp_pressure_inhg(self):
-        pass
+        return self.pressure_inhg
 
-
+    @PreviousValueInterpolated("twentyfourhr_max_f")
+    def interp_twentyfourhr_max_f(self):
+        return self.twentyfourhr_max_f  

@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session
 
@@ -54,7 +54,7 @@ def test_fetch_one_observation(basic_session):
     assert isinstance(obj.datetime_dt, datetime)  # confirms datetime converter from string/to string is working
     assert obj.temp_f == 58.0
 
-#=== Fixtures that vary ===
+#=== Linear interpolation ===
 
 @pytest.fixture(params=[
     # Missing middle value means we should interpolate between the two known values
@@ -64,41 +64,63 @@ def test_fetch_one_observation(basic_session):
     # Missing first value means we should extrapolate backwards
     {"pressure_inhg": (None, 20, 30), "test_index": 0, "expected_interp": 10},
 ])
-def interp_session(request):
+def linear_interp_session(request):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
     p_tup = request.param["pressure_inhg"]
 
     with Session(engine) as session:
-        session.execute(insert(WeatherModel).values(
-            station_code="KOAK",
-            datetime_dt=datetime.fromisoformat("2024-01-15T08:00:00"),
-            temp_f=58.0,
-            pressure_inhg=p_tup[0],
-            twentyfourhr_max_f=None,
-        ))
-        session.execute(insert(WeatherModel).values(
-            station_code="KOAK",
-            datetime_dt=datetime.fromisoformat("2024-01-15T12:00:00"),
-            temp_f=58.0,
-            pressure_inhg=p_tup[1],
-            twentyfourhr_max_f=None,
-        ))
-        session.execute(insert(WeatherModel).values(
-            station_code="KOAK",
-            datetime_dt=datetime.fromisoformat("2024-01-15T16:00:00"),
-            temp_f=58.0,
-            pressure_inhg=p_tup[2],
-            twentyfourhr_max_f=None,
-        ))
-        session.commit()
+        for i, val in enumerate(p_tup):
+            session.execute(insert(WeatherModel).values(
+                station_code="KOAK",
+                datetime_dt=datetime.fromisoformat("2024-01-15T08:00:00") + timedelta(hours=i),
+                temp_f=58.0,
+                pressure_inhg=val,
+            ))
+            session.commit()
         yield session, request.param  # yield both so the test can access expected values
 
 
-def test_linear_interp_value_between_returns_interpolated(interp_session):
-    session, params = interp_session
+def test_linear_interp_value_between_returns_interpolated(linear_interp_session):
+    session, params = linear_interp_session
     stmt = select(WeatherModel)
     results = session.scalars(stmt).all()
     obj = results[params["test_index"]]
     assert obj.interp_pressure_inhg() == params["expected_interp"]
+
+# === Previous value interpolation ===
+
+@pytest.fixture(params=[
+    # Present value means just use that value
+    {"twentyfourhr_max_f": (10, 20, 30), "test_index": 1, "expected_interp": 20},
+    # Missing value means we should extrapolate backwards to the last time there was a value
+    {"twentyfourhr_max_f": (10, None, 20), "test_index": 1, "expected_interp": 10},
+    # No previous value yields None
+    {"twentyfourhr_max_f": (None, None, 20), "test_index": 1, "expected_interp": None},
+])
+def prev_interp_session(request):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    p_tup = request.param["twentyfourhr_max_f"]
+
+    with Session(engine) as session:
+        for i, val in enumerate(p_tup):
+            session.execute(insert(WeatherModel).values(
+                station_code="KOAK",
+                datetime_dt=datetime.fromisoformat("2024-01-15T08:00:00") + timedelta(hours=i),
+                temp_f=58.0,
+                twentyfourhr_max_f=val,
+            ))
+            session.commit()
+        yield session, request.param  # yield both so the test can access expected values
+
+
+def test_previous_interp_returns_interpolated(prev_interp_session):
+    session, params = prev_interp_session
+    stmt = select(WeatherModel)
+    results = session.scalars(stmt).all()
+    obj = results[params["test_index"]]
+    print(obj)
+    assert obj.interp_twentyfourhr_max_f() == params["expected_interp"]
