@@ -6,6 +6,10 @@ name = "pypi"
 [packages]
 python-logging-base = {git = "https://github.com/praecipula/python_logging_base.git"}
 lxml = "*"
+tensorflow = {extras = ["and-cuda"], version = "*"}
+cmd2 = "*"
+pytest = "*"
+sqlalchemy = "*"
 
 [requires]
 python_version = "3.11"

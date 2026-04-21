@@ -16,6 +16,7 @@ LOG.setLevel(logging.TRACE)
 db = sqlite3.connect("./weather.db")
 cursor = db.cursor()
 
+
 fieldnames = [
     "id",
     "station_code",
