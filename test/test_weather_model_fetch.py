@@ -124,3 +124,37 @@ def test_previous_interp_returns_interpolated(prev_interp_session):
     obj = results[params["test_index"]]
     print(obj)
     assert obj.interp_twentyfourhr_max_f() == params["expected_interp"]
+
+# === Default value interpolation ===
+
+@pytest.fixture(params=[
+    # Present value means just use that value
+    {"visibility_m": (2.0, 5.0, 10.0), "test_index": 1, "expected_interp": 5.0},
+    # Missing value means we should extrapolate backwards to the last time there was a value
+    {"visibility_m": (2.0, None, 10.0), "test_index": 1, "expected_interp": 10.0},
+])
+def default_val_interp_session(request):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    p_tup = request.param["visibility_m"]
+
+    with Session(engine) as session:
+        for i, val in enumerate(p_tup):
+            session.execute(insert(WeatherModel).values(
+                station_code="KOAK",
+                datetime_dt=datetime.fromisoformat("2024-01-15T08:00:00") + timedelta(hours=i),
+                temp_f=58.0,
+                visibility_m=val,
+            ))
+            session.commit()
+        yield session, request.param  # yield both so the test can access expected values
+
+
+def test_default_val_interp_returns_interpolated(default_val_interp_session):
+    session, params = default_val_interp_session
+    stmt = select(WeatherModel)
+    results = session.scalars(stmt).all()
+    obj = results[params["test_index"]]
+    print(obj)
+    assert obj.interp_visibility_m() == params["expected_interp"]
