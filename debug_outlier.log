@@ -1,0 +1,16 @@
+--- Inspecting KSFO around 2024-01-01 (+/- 2 days) ---
+
+Labels in range:
+  2023-12-30: Max=62F, Min=52F
+  2023-12-31: Max=58F, Min=49F
+  2024-01-01: Max=68F, Min=48F
+  2024-01-02: Max=64F, Min=47F
+  2024-01-03: Max=59F, Min=49F
+
+Total Observations in range: 1222
+Absolute Max in range: 63.0F at 2024-01-02T20:56:00
+Absolute Min in range: 48.0F at 2024-01-01T12:56:00
+  UTC 2023-12-30: Max=61.0F
+  UTC 2024-01-01: Max=59.0F
+  UTC 2024-01-02: Max=63.0F
+  UTC 2024-01-03: Max=59.0F

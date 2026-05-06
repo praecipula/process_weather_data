@@ -9,21 +9,18 @@ cloud strings to capture simultaneous conditions and vertical cloud structure.
 
 import math
 import datetime
+import pandas as pd
 import numpy as np
 from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
+from zoneinfo import ZoneInfo
 
 from lib.area_config import AreaConfig, Station
 from lib.weather_model import WeatherModel, SummaryFcstModel
 
 
-# =============================================================================
-# CONSTANTS & VOCABULARIES
-# =============================================================================
-
-MAX_SEQ_LEN = 288        # 24h * 12 five-minute slots
-N_FEATURES = 84          # Increased to accommodate 3 cloud layers + multi-hot weather
+from lib.constants import MAX_SEQ_LEN, N_FEATURES
 
 # Weather token normalization: plain English -> METAR code
 # This ensures consistency across different data sources (NWS vs Wunderground)
@@ -80,7 +77,13 @@ def encode_temp_anomaly(temp_f, clim_normal_f: float,
 
 def encode_wind_direction(direction_str: Optional[str]) -> List[float]:
     """Circular encoding for wind direction. Returns [sin, cos]."""
-    from lib.input_vector import WIND_DIRECTION_MAP # Import within or use global
+    WIND_DIRECTION_MAP = {
+        "N": 0.0, "NNE": 22.5, "NE": 45.0, "ENE": 67.5, "E": 90.0, "ESE": 112.5,
+        "SE": 135.0, "SSE": 157.5, "S": 180.0, "SSW": 202.5, "SW": 225.0, "WSW": 247.5,
+        "W": 270.0, "WNW": 292.5, "NW": 315.0, "NNW": 337.5,
+        "NORTH": 0.0, "EAST": 90.0, "SOUTH": 180.0, "WEST": 270.0,
+        "VARIABLE": None, "CALM": None, "VAR": None, "VRB": None
+    }
     if not direction_str or str(direction_str).strip() == "":
         return [0.0, 0.0]
     
@@ -182,47 +185,55 @@ class ObservationEncoder:
     def __init__(self, area: AreaConfig):
         self.area = area
 
-    def encode(self, obs: WeatherModel,
+    def encode(self, obs: dict,
                clim_normal_f: float,
                day_features: np.ndarray) -> np.ndarray:
-        station = self.area.get_station(obs.station_code)
-        station_idx = self.area.station_index_map.get(obs.station_code, 0)
+        """
+        Modified to accept a dictionary (Pandas row) instead of WeatherModel 
+        to bypass the slow SQL-based decorators.
+        """
+        station_idx = self.area.station_index_map.get(obs.get("station_code"), 0)
+        station = self.area.get_station(obs.get("station_code"))
 
         features = []
 
         # 0-1: Temperature anomaly
-        features.extend(encode_temp_anomaly(obs.interp_temp_f(), clim_normal_f))
+        features.extend(encode_temp_anomaly(obs.get("temp_f"), clim_normal_f))
         
         # 2-3: Dewpoint (Range -20 to 80)
-        features.extend(encode_normalized(obs.interp_dewpoint_f(), -20.0, 80.0))
+        features.extend(encode_normalized(obs.get("dewpoint_f"), -20.0, 80.0))
         
         # 4-5: Humidity (0-100)
-        features.extend(encode_normalized(obs.interp_rel_humidity_pct(), 0.0, 100.0))
+        features.extend(encode_normalized(obs.get("rel_humidity_pct"), 0.0, 100.0))
         
         # 6-7: Wind Speed (0-60)
-        features.extend(encode_normalized(obs.interp_wind_speed_mph(), 0.0, 60.0))
+        features.extend(encode_normalized(obs.get("wind_speed_mph"), 0.0, 60.0))
         
         # 8-9: Wind Gust (0-80)
-        features.extend(encode_normalized(obs.interp_wind_gust_mph(), 0.0, 80.0))
+        features.extend(encode_normalized(obs.get("wind_gust_mph"), 0.0, 80.0))
         
         # 10-11: Visibility (0-10 miles, missing defaults to clear)
-        features.extend(encode_normalized(obs.interp_visibility_m(), 0.0, 10.0, missing_val=1.0))
+        features.extend(encode_normalized(obs.get("visibility_m"), 0.0, 10.0, missing_val=1.0))
         
         # 12-13: Pressure (28 to 31 inHg)
-        features.extend(encode_normalized(obs.interp_pressure(), 28.0, 31.0))
+        # Composite pressure: use pressure_inhg or fallback to altimeter
+        press = obs.get("pressure_inhg")
+        if press is None or math.isnan(press):
+            press = obs.get("altimiter_setting_inhg")
+        features.extend(encode_normalized(press, 28.0, 31.0))
         
-        # 14-19: Precip (1, 3, 6 hr) - Log normalized in input_vector logic
+        # 14-19: Precip (1, 3, 6 hr)
         from lib.input_vector import encode_precip
-        features.extend(encode_precip(obs.interp_onehr_precip_in()))
-        features.extend(encode_precip(obs.interp_threehr_precip_in()))
-        features.extend(encode_precip(obs.interp_sixhr_precip_in()))
+        features.extend(encode_precip(obs.get("onehr_precip_in")))
+        features.extend(encode_precip(obs.get("threehr_precip_in")))
+        features.extend(encode_precip(obs.get("sixhr_precip_in")))
         
         # 20-21: Wind Direction sin/cos
-        features.extend(encode_wind_direction(obs.interp_wind_direction_t()))
+        features.extend(encode_wind_direction(obs.get("wind_direction_t")))
         
         # 22-26: Datetime circular + fraction
         from lib.input_vector import encode_datetime
-        features.extend(encode_datetime(obs.datetime_dt))
+        features.extend(encode_datetime(obs.get("datetime_dt")))
         
         # 27: Station Index (Categorical)
         features.append(float(station_idx))
@@ -235,35 +246,24 @@ class ObservationEncoder:
             features.extend([0.0, 0.0, 0.0])
             
         # 31-53: Weather Multi-hot (23 tokens)
-        features.extend(encode_weather_multi_hot(obs.interp_weather_t()))
+        features.extend(encode_weather_multi_hot(obs.get("weather_t")))
         
-        # 54-77: Cloud Grammar (3 layers * 8 features = 24)
-        features.extend(encode_clouds_grammar(obs.interp_clouds_t()))
+        # 54-77: Cloud Grammar
+        features.extend(encode_clouds_grammar(obs.get("clouds_t")))
         
         # 78-79: Daylight & Record Proximity
         features.append(float(day_features[0]))
         features.append(float(day_features[1]))
 
-        # Final check on feature length
-        # NOTE: If length mismatch, check N_FEATURES constant
         return np.array(features, dtype=np.float32)
 
 # =============================================================================
 # SEQUENCE BUILDER & HELPERS
 # =============================================================================
 
-WIND_DIRECTION_MAP = {
-    "N": 0.0, "NNE": 22.5, "NE": 45.0, "ENE": 67.5, "E": 90.0, "ESE": 112.5,
-    "SE": 135.0, "SSE": 157.5, "S": 180.0, "SSW": 202.5, "SW": 225.0, "WSW": 247.5,
-    "W": 270.0, "WNW": 292.5, "NW": 315.0, "NNW": 337.5,
-    "NORTH": 0.0, "EAST": 90.0, "SOUTH": 180.0, "WEST": 270.0,
-    "VARIABLE": None, "CALM": None, "VAR": None, "VRB": None
-}
-
 def encode_precip(value) -> List[float]:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return [0.0, 1.0]
-    # log1p normalization capped at 2 inches
     norm = math.log1p(max(0.0, float(value))) / math.log1p(2.0)
     return [min(norm, 1.0), 0.0]
 
@@ -296,24 +296,19 @@ class SequenceBuilder:
         self.area = area
         self.session = session
         self.encoder = ObservationEncoder(area)
+        self.tz = ZoneInfo("America/Los_Angeles")
 
-    def _get_summary(self, station_code: str, target_date: datetime.date) -> Optional[SummaryFcstModel]:
-        stmt = select(SummaryFcstModel).where(
-            SummaryFcstModel.station_code == station_code,
-            SummaryFcstModel.date_d >= datetime.datetime(target_date.year, target_date.month, target_date.day),
-            SummaryFcstModel.date_d < datetime.datetime(target_date.year, target_date.month, target_date.day) + datetime.timedelta(days=1)
-        )
-        return self.session.scalars(stmt).first()
+    def _get_local_window_utc(self, target_date: datetime.date) -> Tuple[datetime.datetime, datetime.datetime]:
+        local_start = datetime.datetime.combine(target_date, datetime.time.min).replace(tzinfo=self.tz)
+        local_end = local_start + datetime.timedelta(days=1)
+        utc_start = local_start.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        utc_end = local_end.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return utc_start, utc_end
 
-    def _get_observations(self, station_code: str, target_date: datetime.date) -> List[WeatherModel]:
-        start = datetime.datetime(target_date.year, target_date.month, target_date.day)
-        end = start + datetime.timedelta(days=1)
-        stmt = select(WeatherModel).where(
-            WeatherModel.station_code == station_code,
-            WeatherModel.datetime_dt >= start,
-            WeatherModel.datetime_dt < end
-        ).order_by(WeatherModel.datetime_dt)
-        return list(self.session.scalars(stmt).all())
+    def _is_dst_transition(self, target_date: datetime.date) -> bool:
+        local_start = datetime.datetime.combine(target_date, datetime.time.min).replace(tzinfo=self.tz)
+        local_end = local_start + datetime.timedelta(days=1)
+        return (local_end - local_start) != datetime.timedelta(hours=24)
 
     def _anomaly_to_target(self, actual_f: float, normal_f: float) -> np.ndarray:
         anomaly = int(round(actual_f - normal_f))
@@ -323,20 +318,180 @@ class SequenceBuilder:
         target[idx] = 1.0
         return target
 
-    def build_day_sequence(self, station_code: str, target_date: datetime.date) -> Optional[np.ndarray]:
-        observations = self._get_observations(station_code, target_date)
+    def build_day_sequence_from_data(self, observations: List[dict], summary: Optional[SummaryFcstModel]) -> Optional[np.ndarray]:
         if not observations: return None
-        summary = self._get_summary(station_code, target_date)
-        norm_f = float(summary.max_temp_normal if summary and summary.max_temp_normal else 65.0)
-        day_feat = np.array([encode_daylight(summary.daylight_minutes if summary else None), 
-                             float(summary.record_proximity if summary else 0.75)], dtype=np.float32)
         
-        seq = np.zeros((MAX_SEQ_LEN, len(self.encoder.encode(observations[0], norm_f, day_feat))), dtype=np.float32)
+        # Safe access to summary fields with defaults
+        norm_f = 65.0
+        daylight = None
+        proximity = 0.75
+        
+        if summary:
+            if summary.max_temp_normal is not None:
+                norm_f = float(summary.max_temp_normal)
+            daylight = summary.daylight_minutes
+            if summary.record_proximity is not None:
+                proximity = float(summary.record_proximity)
+                
+        day_feat = np.array([encode_daylight(daylight), proximity], dtype=np.float32)
+        
+        seq = np.zeros((MAX_SEQ_LEN, N_FEATURES), dtype=np.float32)
         for i, obs in enumerate(observations[:MAX_SEQ_LEN]):
             seq[i] = self.encoder.encode(obs, norm_f, day_feat)
         return seq
 
-    def iter_training_days(self):
-        # Implementation similar to previous but using updated encoding logic
-        # For brevity, this would iterate through DB and yield (X, y_max, y_min, meta)
-        pass
+    def iter_training_days(self, consistency_threshold: float = 5.0):
+        station_codes = [s.station_code for s in self.area.stations]
+        
+        # 1. Bulk Fetch Summaries
+        print(f"[{self.area.name}] Bulk fetching summaries...")
+        stmt_summaries = select(SummaryFcstModel).where(
+            SummaryFcstModel.station_code.in_(station_codes),
+            SummaryFcstModel.max_temp_f.is_not(None),
+            SummaryFcstModel.min_temp_f.is_not(None)
+        ).order_by(SummaryFcstModel.date_d)
+        all_summaries = self.session.scalars(stmt_summaries).all()
+        summary_map = {(s.station_code, s.date_d.date()): s for s in all_summaries}
+        
+        if not all_summaries:
+            return
+
+        min_date = min(s.date_d.date() for s in all_summaries)
+        max_date = max(s.date_d.date() for s in all_summaries)
+        fetch_start, _ = self._get_local_window_utc(min_date)
+        _, fetch_end = self._get_local_window_utc(max_date)
+
+        # 2. Bulk Fetch Observations
+        print(f"[{self.area.name}] Bulk fetching observations ({min_date} to {max_date})...")
+        stmt_obs = select(WeatherModel).where(
+            WeatherModel.station_code.in_(station_codes),
+            WeatherModel.datetime_dt >= fetch_start,
+            WeatherModel.datetime_dt < fetch_end
+        ).order_by(WeatherModel.station_code, WeatherModel.datetime_dt)
+        
+        all_obs_rows = []
+        for o in self.session.scalars(stmt_obs).all():
+            all_obs_rows.append({
+                "station_code": o.station_code,
+                "datetime_dt": o.datetime_dt,
+                "temp_f": o.temp_f,
+                "dewpoint_f": o.dewpoint_f,
+                "rel_humidity_pct": o.rel_humidity_pct,
+                "wind_speed_mph": o.wind_speed_mph,
+                "wind_gust_mph": o.wind_gust_mph,
+                "wind_direction_t": o.wind_direction_t,
+                "visibility_m": o.visibility_m,
+                "pressure_inhg": o.pressure_inhg,
+                "altimiter_setting_inhg": o.altimiter_setting_inhg,
+                "onehr_precip_in": o.onehr_precip_in,
+                "threehr_precip_in": o.threehr_precip_in,
+                "sixhr_precip_in": o.sixhr_precip_in,
+                "weather_t": o.weather_t,
+                "clouds_t": o.clouds_t
+            })
+        
+        df = pd.DataFrame(all_obs_rows)
+        if df.empty: return
+
+        # 3. Bulk Impute
+        print(f"[{self.area.name}] Bulk imputing data gaps in memory...")
+        df["datetime_dt"] = pd.to_datetime(df["datetime_dt"])
+        episodic_cols = ["wind_gust_mph", "wind_direction_t", "weather_t", "clouds_t"]
+        smooth_cols = ["temp_f", "dewpoint_f", "rel_humidity_pct", "wind_speed_mph", 
+                       "pressure_inhg", "altimiter_setting_inhg"]
+        
+        df["visibility_m"] = df["visibility_m"].fillna(10.0)
+        df["onehr_precip_in"] = df["onehr_precip_in"].fillna(0.0)
+        df["threehr_precip_in"] = df["threehr_precip_in"].fillna(0.0)
+        df["sixhr_precip_in"] = df["sixhr_precip_in"].fillna(0.0)
+
+        clean_df_list = []
+        for code, group in df.groupby("station_code"):
+            group = group.sort_values("datetime_dt").set_index("datetime_dt")
+            group[smooth_cols] = group[smooth_cols].interpolate(method='linear', limit_direction='both')
+            group[episodic_cols] = group[episodic_cols].ffill().bfill()
+            group["station_code"] = code
+            clean_df_list.append(group.reset_index())
+        
+        df = pd.concat(clean_df_list)
+
+        # 4. Group by Local Date
+        print(f"[{self.area.name}] Grouping data for processing...")
+        df["local_date"] = df["datetime_dt"].dt.tz_localize("UTC").dt.tz_convert(self.tz).dt.date
+        obs_groups = df.groupby(["station_code", "local_date"])
+
+        # 5. Filter and Yield
+        stats = {"dst": 0, "mismatch": 0, "density": 0, "success": 0}
+        min_obs = 100
+
+        print(f"[{self.area.name}] Applying defensive filters to {len(summary_map)} candidate days...")
+
+        for key, summary in summary_map.items():
+            station_code, obs_date = key
+            
+            if self._is_dst_transition(obs_date):
+                stats["dst"] += 1
+                continue
+
+            try:
+                day_obs_df = obs_groups.get_group(key)
+            except KeyError:
+                stats["density"] += 1
+                continue
+
+            if len(day_obs_df) < min_obs:
+                stats["density"] += 1
+                continue
+
+            obs_max = day_obs_df["temp_f"].max()
+            obs_min = day_obs_df["temp_f"].min()
+            max_f = float(summary.max_temp_f)
+            min_f = float(summary.min_temp_f)
+
+            if abs(obs_max - max_f) > consistency_threshold or abs(obs_min - min_f) > consistency_threshold:
+                stats["mismatch"] += 1
+                continue
+
+            max_norm = float(summary.max_temp_normal or 65.0)
+            daylight = summary.daylight_minutes
+            proximity = float(summary.record_proximity or 0.75)
+            day_feat = np.array([encode_daylight(daylight), proximity], dtype=np.float32)
+
+            seq = np.zeros((MAX_SEQ_LEN, N_FEATURES), dtype=np.float32)
+            day_obs_dicts = day_obs_df.to_dict('records')
+            for i, row_dict in enumerate(day_obs_dicts[:MAX_SEQ_LEN]):
+                seq[i] = self.encoder.encode(row_dict, max_norm, day_feat)
+
+            stats["success"] += 1
+            yield (
+                seq,
+                self._anomaly_to_target(max_f, max_norm),
+                self._anomaly_to_target(min_f, float(summary.min_temp_normal or 50.0)),
+                {
+                    "station_code": station_code,
+                    "date": obs_date.isoformat(),
+                    "actual_max": max_f,
+                    "actual_min": min_f,
+                    "normal_max": max_norm
+                }
+            )
+
+        print(f"[{self.area.name}] Training Set Summary:")
+        print(f"  - Successfully processed: {stats['success']}")
+        print(f"  - Skipped (DST Transition): {stats['dst']}")
+        print(f"  - Skipped (Insufficient Density): {stats['density']}")
+        print(f"  - Skipped (Label Mismatch > {consistency_threshold}F): {stats['mismatch']}")
+
+    def make_arrays(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[dict]]:
+        """Collect all training days into large NumPy arrays for Keras."""
+        X, y_max, y_min, metas = [], [], [], []
+        for sample in self.iter_training_days():
+            X.append(sample[0])
+            y_max.append(sample[1])
+            y_min.append(sample[2])
+            metas.append(sample[3])
+            
+        if not X:
+            raise ValueError(f"No valid training data found for {self.area.area_key}")
+            
+        return np.stack(X), np.stack(y_max), np.stack(y_min), metas

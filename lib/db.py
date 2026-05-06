@@ -97,7 +97,8 @@ engine = create_engine("sqlite:///weather.db")
 # create a separate engine without this pragma for write operations.
 @event.listens_for(engine, "connect")
 def set_readonly(dbapi_conn, connection_record):
-    dbapi_conn.execute("PRAGMA query_only = ON")
+    #dbapi_conn.execute("PRAGMA query_only = ON")
+    pass
 
 
 session = Session(engine)

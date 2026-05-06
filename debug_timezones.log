@@ -1,0 +1,27 @@
+--- Analyzing KSFO on 2023-02-21 ---
+Official Label: Max=56F, Min=46F
+UTC Window (Midnight-Midnight UTC): Max=63.0F, Min=50.0F
+Local Window (Midnight-Midnight PST): Max=56.0F, Min=46.0F
+
+Conclusion:
+SUCCESS: Local window matches labels exactly!
+
+========================================
+
+--- Analyzing KSFO on 2023-01-09 ---
+Official Label: Max=62F, Min=52F
+UTC Window (Midnight-Midnight UTC): Max=62.0F, Min=57.0F
+Local Window (Midnight-Midnight PST): Max=62.0F, Min=53.0F
+
+Conclusion:
+STILL MISMATCHED: Offset might be different (PDT vs PST) or data is just noisy.
+
+========================================
+
+--- Analyzing KSFO on 2024-01-01 ---
+Official Label: Max=68F, Min=48F
+UTC Window (Midnight-Midnight UTC): Max=59.0F, Min=48.0F
+Local Window (Midnight-Midnight PST): Max=59.0F, Min=48.0F
+
+Conclusion:
+STILL MISMATCHED: Offset might be different (PDT vs PST) or data is just noisy.
