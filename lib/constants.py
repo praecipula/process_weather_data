@@ -1,8 +1,9 @@
 """
 constants.py
 ============
-Shared dimensions and constants for the weather prediction pipeline.
+Shared dimensions and constants for the Multi-Resolution pipeline.
 """
 
-MAX_SEQ_LEN = 288        # 24h * 12 five-minute slots
-N_FEATURES = 83          # Updated for PID features (80 + 3)
+MACRO_SEQ_LEN = 24       # 24 hours of 1-hour slots
+MICRO_SEQ_LEN = 24       # 120 minutes of 5-minute slots
+N_FEATURES = 15          # Optimized Quintet: [P, I, D, Time, Hum, Wind, Weather, Sky]

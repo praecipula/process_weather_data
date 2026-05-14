@@ -1,0 +1,147 @@
+# GCP Environment Setup for GenCast Forecasting
+
+This document outlines the one-time setup required to prepare your Google Cloud Platform (GCP) project for running GenCast weather forecasts. The goal is to create a cost-effective, reproducible, and ephemeral compute environment.
+
+## Architecture Overview
+
+*   **Source Code:** Lives in your GitHub repository (this repo).
+*   **Persistent Data:** Google Cloud Storage (GCS) buckets for model weights, input ERA5 data, and output forecast files (`.nc`).
+*   **Compute:** Ephemeral Compute Engine VM + Cloud TPU, spun up only when a forecast run is needed.
+*   **Environment:** Defined by `Dockerfile` and `docker-compose.yml` for consistency.
+*   **Local Analysis:** GCS bucket mounted locally (via `gcsfuse`) for convenient analysis of `.nc` output files.
+
+---
+
+## 1. Google Cloud Project Setup
+
+1.  **Create a New GCP Project:**
+    *   Go to the [GCP Console](https://console.cloud.google.com/).
+    *   Click the project selector dropdown (usually at the top).
+    *   Click "New Project."
+    *   Give it a meaningful name (e.g., `overengineeredweather`). Note down its Project ID (it's usually a generated string like `overengineeredweather-xxxxxx`).
+
+2.  **Set Up Billing:**
+    *   Ensure billing is enabled for your new project. Go to [Billing](https://console.cloud.google.com/billing) in the console and link a billing account. **TPUs are not covered by the free tier.**
+
+---
+
+## 2. Enable Required GCP APIs
+
+From the [API Library](https://console.cloud.google.com/apis/library), enable the following APIs for your new project:
+
+*   **Compute Engine API** (required for VMs and TPUs)
+*   **Cloud TPU API** (required for Cloud TPUs)
+*   **Cloud Storage API** (required for GCS buckets)
+*   **Service Usage API** (often required for various GCP operations)
+
+---
+
+## 3. Create a Service Account & Grant Permissions
+
+You'll need a service account for your ephemeral VM to securely access GCS and TPUs.
+
+1.  **Create Service Account:**
+    *   Go to [IAM & Admin -> Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts).
+    *   Click "CREATE SERVICE ACCOUNT."
+    *   Give it a name (e.g., `gencast-runner`).
+    *   Click "DONE." (You don't need to grant roles here yet).
+
+2.  **Grant Permissions to the Service Account:**
+    *   Go to [IAM & Admin -> IAM](https://console.cloud.google.com/iam-admin/iam).
+    *   Click "GRANT ACCESS."
+    *   In the "New principals" field, enter the email of your newly created service account.
+    *   Grant the following roles:
+        *   `Storage Admin` (to read/write to your GCS buckets)
+        *   `Compute Instance Admin (v1)` (to manage the VM)
+        *   `Cloud TPU Admin` (to manage the TPU)
+        *   `Service Account User` (to allow the VM to run as this service account)
+    *   Click "SAVE."
+
+---
+
+## 4. Create Cloud Storage Buckets
+
+You'll need at least one GCS bucket to store GenCast model weights, any custom input data, and all your forecast outputs.
+
+1.  **Create a GCS Bucket:**
+    *   Go to [Cloud Storage -> Buckets](https://console.cloud.google.com/storage/buckets).
+    *   Click "CREATE BUCKET."
+    *   Choose a globally unique name (e.g., `overengineeredweather-run-data`).
+    *   Choose a region close to `us-central1` (e.g., `us-central1`) to minimize network latency with your TPUs.
+    *   Choose "Standard" storage class.
+    *   Retain default data protection options.
+    *   Click "CREATE."
+
+2.  **Note:** Make sure the service account created in Step 3 has `Storage Admin` role on this bucket.
+
+---
+
+## 5. Cloud TPU Quota Status (Verified)
+
+**Good News:** Your project has a sufficient default quota for Preemptible TPU v5e instances in regions like `us-central1` and `us-east1`.
+
+Our target instance is a `v5litepod-8` (8 cores), and your project's default limit for `Preemptible TPU v5 lite pod cores` is **16 cores**.
+
+**No quota increase request is necessary.** You can proceed directly to the next steps.
+
+---
+
+## 6. Access GenCast Models and ERA5 Data
+
+Both the GenCast model weights and the ERA5 input data are publicly available in GCS buckets provided by Google. You will copy the necessary model weights to your private GCS bucket.
+
+1.  **GenCast Models and Stats:**
+    *   The pre-trained GenCast models are in `gs://dm_graphcast/gencast/`. You need both the model weights (.npz) and the normalization statistics (.nc).
+    *   **Copy Model Weights:**
+        `gcloud storage cp "gs://dm_graphcast/gencast/params/GenCast 0p25deg Operational <2022.npz" gs://overengineeredweather-run-data/models/`
+    *   **Copy Normalization Stats:**
+        `gcloud storage cp -r gs://dm_graphcast/gencast/stats gs://overengineeredweather-run-data/`
+
+2.  **ERA5 Data:**
+    *   The ERA5 dataset is massive and lives in `gs://gcp-public-data-arco-era5/`. You will typically stream or copy only the specific atmospheric variables and time slices needed for your forecast.
+    *   **Important:** Do NOT try to copy the entire ERA5 dataset. It's petabytes in size. Your scripts will need to intelligently select and download only the required input files for a given forecast run.
+
+---
+
+## 7. Local GCS FUSE Setup (for Analysis)
+
+To seamlessly analyze `.nc` output files locally, you'll use `gcsfuse` to mount your GCS bucket.
+
+1.  **Install `gcsfuse`:** Follow the installation instructions for your Linux distribution: [gcsfuse GitHub](https://github.com/GoogleCloudPlatform/gcsfuse/blob/master/docs/install.md).
+2.  **Authenticate:**
+    *   Log into the gcloud CLI: `gcloud auth login`
+    *   **Crucial for gcsfuse:** Set up Application Default Credentials (ADC):
+        `gcloud auth application-default login`
+    *   Ensure your project is set: `gcloud config set project overengineeredweather`
+3.  **Mount the Bucket:**
+    *   Create a local mount point: `mkdir ~/gcs_mount_point`
+    *   Mount your bucket: `gcsfuse --implicit-dirs overengineeredweather-run-data ~/gcs_mount_point`
+    *   You can then access files in `gs://overengineeredweather-run-data/` via `~/gcs_mount_point/`.
+
+---
+
+## 8. Next Steps: Automating the GenCast Run
+
+The following files will be created in your GitHub repository to automate the prediction workflow:
+
+### `docker-compose.yml`
+
+This file defines the Docker container environment where GenCast will run. It ensures all dependencies are encapsulated and the environment is consistent. It will also define how your local code and the GCS mount point are exposed to the container.
+
+### `Dockerfile`
+
+This file describes how to build the Docker image for the `gencast-worker` service defined in `docker-compose.yml`. It will install the necessary Python packages (JAX, Haiku, NetCDF libraries, etc.) and the GenCast codebase.
+
+### `gcp-run-forecast.sh`
+
+This is the main orchestration script. It will handle:
+*   Provisioning a Compute Engine VM with an attached Cloud TPU.
+*   Installing Docker and Docker Compose on the VM.
+*   Cloning your GitHub repository onto the VM.
+*   Mounting your GCS bucket onto the VM using `gcsfuse`.
+*   Building and running the Docker container via `docker-compose`.
+*   Executing the GenCast prediction script inside the container.
+*   (Optionally) Copying any final results or logs to GCS if not already handled by the `gcsfuse` mount.
+*   Spinning down and deleting the VM and TPU to save costs.
+
+This script encapsulates the entire ephemeral workflow.

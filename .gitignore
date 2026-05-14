@@ -1,5 +1,34 @@
-weather.db
+# Databases and Backups
+weather.db*
+weather.testing.db
+
+# Logs
+*.log*
+logs/
+
+# Data and Scrapes
+input_scrapes/
+manual_entry_history
+
+# Results and Visualizations
+*.png
+prediction_*.csv
+weather_report.txt
 day_over_day.csv
-python.log
+summary.yaml
+
+# Cloud/Infrastructure Artifacts
+quota.json
+
+# Environment and IDE
+.vscode/
+.python-version
+.DS_Store
+._*
 *.swp
 *.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class

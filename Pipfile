@@ -15,6 +15,7 @@ matplotlib = "*"
 pandas = "*"
 scipy = "*"
 rich = "*"
+pyyaml = "*"
 
 [requires]
 python_version = "3.11"

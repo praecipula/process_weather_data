@@ -1,7 +1,7 @@
 """
 predict.py
 ==========
-Live forecasting and convergence analysis script.
+Multi-Resolution forecasting and convergence analysis script.
 Calculates uncertainty metrics and generates PNG/CSV outputs.
 """
 
@@ -24,7 +24,7 @@ def calculate_uncertainty(probs):
     return ent, n_buckets_90
 
 def run_prediction_progression(area_key: str, station_code: str, target_date: datetime.date):
-    print(f"--- Convergence Analysis for {station_code} on {target_date} ---")
+    print(f"--- Multi-Resolution Convergence Analysis for {station_code} on {target_date} ---")
     
     area = get_area(area_key)
     builder = SequenceBuilder(area, session)
@@ -34,22 +34,31 @@ def run_prediction_progression(area_key: str, station_code: str, target_date: da
     weather_model.model.load_weights(model_path)
     
     # Build Context Head (Yesterday back to 7 days ago)
-    # This is constant for the whole progression
     X_context = builder.build_context_sequence(station_code, target_date)
     X_context = np.expand_dims(X_context, axis=0) # Batch dimension
     
     results = []
     tz = builder.tz
+    
+    best_ci90 = float('inf')
+    best_line = ""
+    
     for hour in range(24):
         local_as_of = datetime.datetime.combine(target_date, datetime.time(hour, 0)).replace(tzinfo=tz)
         utc_as_of = local_as_of.astimezone(datetime.timezone.utc)
         
-        # Build Live Head as of this hour
-        X_live = builder.build_partial_day_sequence(station_code, target_date, as_of_utc=utc_as_of)
-        X_live = np.expand_dims(X_live, axis=0)
+        # Build Macro (Hourly) and Micro (120-min) Heads
+        macro_seq, micro_seq = builder.build_multi_day_sequence(station_code, target_date, as_of_utc=utc_as_of)
         
-        # Predict using both inputs
-        max_probs, _ = weather_model.predict_probs({"main_input": X_live, "context_input": X_context})
+        X_macro = np.expand_dims(macro_seq, axis=0)
+        X_micro = np.expand_dims(micro_seq, axis=0)
+        
+        # Predict using all three inputs
+        max_probs, _ = weather_model.predict_probs({
+            "macro_input": X_macro, 
+            "micro_input": X_micro, 
+            "context_input": X_context
+        })
         
         max_probs = max_probs[0]
         top_anomaly_idx = np.argmax(max_probs)
@@ -69,7 +78,12 @@ def run_prediction_progression(area_key: str, station_code: str, target_date: da
             "ci90_width": ci90,
             "probs": max_probs
         })
-        print(f"  {hour:02d}:00 -> Pred: {predicted_temp:.1f}F (Conf: {max_probs[top_anomaly_idx]:.1%}, 90%CI: {ci90} deg)")
+        line = f"{hour:02d}:00 -> Pred: {predicted_temp:.1f}F (Conf: {max_probs[top_anomaly_idx]:.1%}, 90%CI: {ci90} deg)"
+        print(f"  {line}")
+        
+        if ci90 <= best_ci90:
+            best_ci90 = ci90
+            best_line = line
 
     df = pd.DataFrame(results)
     csv_path = f"prediction_{station_code}_{target_date}.csv"
@@ -84,6 +98,29 @@ def run_prediction_progression(area_key: str, station_code: str, target_date: da
     ax2.plot(df["hour_local"], df["ci90_width"], 'g-s', label="90% Confidence Interval Width")
     ax2.set_ylabel("Uncertainty (Deg)"); ax2.set_ylim(0, 15); ax2.legend(); ax2.grid(True)
     plt.savefig(f"convergence_{station_code}_{target_date}.png")
+
+    import yaml
+    summary_path = "summary.yaml"
+    summary_data = {}
+    if os.path.exists(summary_path):
+        try:
+            with open(summary_path, 'r') as f:
+                summary_data = yaml.safe_load(f) or {}
+        except: pass
+    
+    if "predictions" not in summary_data:
+        summary_data["predictions"] = {}
+        
+    date_str = str(target_date)
+    now_iso = datetime.datetime.now(tz).isoformat()
+    
+    summary_data["predictions"][date_str] = {
+        "timestamp": now_iso,
+        "min_ci90_line": best_line
+    }
+    
+    with open(summary_path, 'w') as f:
+        yaml.dump(summary_data, f, default_flow_style=False, sort_keys=False)
 
 if __name__ == "__main__":
     import argparse
