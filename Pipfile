@@ -10,6 +10,11 @@ tensorflow = "*"
 cmd2 = "*"
 pytest = "*"
 sqlalchemy = "*"
+apprise = "*"
+matplotlib = "*"
+pandas = "*"
+scipy = "*"
+rich = "*"
 
 [requires]
 python_version = "3.11"

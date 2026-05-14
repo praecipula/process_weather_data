@@ -10,7 +10,7 @@ echo "--- Phase 1: Ingesting Hourly Normals ---"
 pipenv run python ingest_normals.py --station $STATION --ncei_id $NCEI_ID
 
 echo -e "\n--- Phase 2: Ingesting Observations & Labels ---"
-for year in 2023 2024; do
+for year in 2020 2021 2022 2023 2024 2025 2026; do
     echo "Processing Year: $year"
     
     # Ingest hourly observations

@@ -66,22 +66,28 @@ class ISO8601DateTime(TypeDecorator):
     SQLite has no native datetime type; this ensures consistent
     round-tripping between Python and the database.
 
-    e.g.  datetime(2026, 3, 12, 9, 0, 0)  <->  "2026-03-12T09:00:00"
+    All datetimes are enforced to be UTC-aware.
+    e.g.  datetime(2026, 3, 12, 9, 0, 0)  ->  "2026-03-12T09:00:00+00:00"
     """
     impl = Text
     cache_ok = True
 
     def process_result_value(self, value, dialect):
-        """DB -> Python: parse ISO8601 string to datetime on read."""
+        """DB -> Python: parse ISO8601 string to UTC-aware datetime on read."""
         if value is None:
             return None
-        return datetime.datetime.fromisoformat(value)
+        dt = datetime.datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.astimezone(datetime.timezone.utc)
 
     def process_bind_param(self, value, dialect):
-        """Python -> DB: serialize datetime to ISO8601 string on write."""
+        """Python -> DB: serialize datetime to ISO8601 string on write, forcing UTC."""
         if value is None:
             return None
-        return value.isoformat()
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        return value.astimezone(datetime.timezone.utc).isoformat()
 
 
 # =============================================================================

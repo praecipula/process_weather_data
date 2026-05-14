@@ -12,7 +12,7 @@ import requests
 import pandas as pd
 import argparse
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from lib.db import session, engine
 from lib.weather_model import WeatherModel
 from sqlalchemy.dialects.sqlite import insert
@@ -91,13 +91,19 @@ def map_iem_to_db(df: pd.DataFrame, station_code: str):
     for _, row in df.iterrows():
         try:
             if pd.isna(row['valid']): continue
+            
+            temp = safe_float(row.get('tmpf'))
+            # Filter out rows with no temperature data (low signal for our model)
+            if temp is None:
+                continue
+
             drct = safe_float(row.get('drct'))
             wind_dir = str(int(drct)) if drct is not None else None
             
             record = {
                 "station_code": station_code,
-                "datetime_dt": datetime.strptime(row['valid'], "%Y-%m-%d %H:%M"),
-                "temp_f": safe_float(row.get('tmpf')),
+                "datetime_dt": datetime.strptime(row['valid'], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc),
+                "temp_f": temp,
                 "dewpoint_f": safe_float(row.get('dwpf')),
                 "rel_humidity_pct": int(safe_float(row.get('relh'))) if safe_float(row.get('relh')) is not None else None,
                 "wind_direction_t": wind_dir,

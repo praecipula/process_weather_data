@@ -1,14 +1,9 @@
 """
 keras_model.py
 ==============
-Keras/TensorFlow implementation of the Weather prediction model.
-
-Architecture:
-  - Input: (MAX_SEQ_LEN, N_FEATURES)
-  - Embedding: Station index (feature 27) maps to a dense vector.
-  - Deep LSTM: Dual-layer LSTM for capturing complex temporal dependencies.
-  - Dual Softmax Heads: Predicts probability distribution for max and min 
-    temperature anomalies.
+Dual-Pooling Architecture.
+Combines Average Pooling (the 'vibe') and Max Pooling (the 'peak') 
+to ensure the model acknowledges when the day's high has been reached.
 """
 
 import tensorflow as tf
@@ -17,94 +12,58 @@ from lib.constants import MAX_SEQ_LEN, N_FEATURES
 
 
 class WeatherLSTM:
-    """
-    Keras model for predicting temperature anomalies using an LSTM backbone.
-    """
-
     def __init__(self, area_config):
         self.area = area_config
         self.model = self._build_model()
 
     def _build_model(self) -> Model:
-        # 1. Inputs
-        main_input = layers.Input(shape=(MAX_SEQ_LEN, N_FEATURES), name="main_input")
+        live_input = layers.Input(shape=(MAX_SEQ_LEN, N_FEATURES), name="main_input")
+        context_input = layers.Input(shape=(7, 10), name="context_input")
 
-        # 2. Branching: Separate Station Index from Continuous Features
-        def slice_cont(x):
-            return tf.concat([x[:, :, :27], x[:, :, 28:]], axis=-1)
+        # 1. Sequence Pre-processing
+        def slice_cont(x): return tf.concat([x[:, :, :27], x[:, :, 28:]], axis=-1)
+        live_cont = layers.Lambda(slice_cont)(live_input)
+        station_idx = layers.Lambda(lambda x: x[:, :, 27])(live_input)
+        station_emb = layers.Embedding(input_dim=self.area.num_stations, output_dim=16)(station_idx)
+        live_merged = layers.Concatenate(axis=-1)([live_cont, station_emb])
+
+        # 2. The Observer (LSTM)
+        x_live = layers.LSTM(128, return_sequences=True, name="observer_lstm")(live_merged)
+        x_live = layers.Dropout(0.1)(x_live)
         
-        cont_features = layers.Lambda(slice_cont)(main_input)
-        station_idx = layers.Lambda(lambda x: x[:, :, 27])(main_input)
-
-        # 3. Embedding Layer for Station
-        station_emb = layers.Embedding(
-            input_dim=self.area.num_stations,
-            output_dim=8,
-            name="station_embedding"
-        )(station_idx)
-
-        # 4. Merge
-        merged = layers.Concatenate(axis=-1)([cont_features, station_emb])
-
-        # 5. LSTM Backbone (Upgraded)
-        # Increased to 64 units and added a second layer
-        x = layers.LSTM(64, return_sequences=True)(merged)
-        x = layers.Dropout(0.2)(x)
-        x = layers.LSTM(32, return_sequences=False)(x)
-        x = layers.Dropout(0.2)(x)
-
-        # 6. Dense Neck
-        x = layers.Dense(64, activation="relu")(x)
-
-        # 7. Dual Heads (Softmax)
-        output_max = layers.Dense(
-            self.area.temp_buckets, 
-            activation="softmax", 
-            name="max_temp_anomaly"
-        )(x)
+        # 3. DUAL TEMPORAL POOLING
+        # Average tells us the trend; Max tells us the peak so far.
+        avg_pool = layers.GlobalAveragePooling1D(name="avg_pool")(x_live)
+        max_pool = layers.GlobalMaxPooling1D(name="max_pool")(x_live)
         
-        output_min = layers.Dense(
-            self.area.temp_buckets, 
-            activation="softmax", 
-            name="min_temp_anomaly"
-        )(x)
+        # Combine the 'Vibe' and the 'Peak'
+        live_features = layers.Concatenate(name="pool_concat")([avg_pool, max_pool])
 
-        model = Model(inputs=main_input, outputs=[output_max, output_min])
+        # 4. Context Branch (The Prior)
+        # We name this clearly so we can freeze it later
+        x_context = layers.LSTM(32, name="ctx_lstm")(context_input)
         
-        # 8. Compile with informative metrics
-        # Top-3/Top-5 accuracy are great for weather (is the truth close?)
-        metrics = [
-            "accuracy",
-            tf.keras.metrics.TopKCategoricalAccuracy(k=3, name="top_3_acc"),
-            tf.keras.metrics.TopKCategoricalAccuracy(k=5, name="top_5_acc")
-        ]
+        # 5. The Decision Neck
+        merged = layers.Concatenate(axis=-1)([live_features, x_context])
+        
+        x = layers.Dense(128, activation="relu", name="neck_1")(merged)
+        x = layers.Dropout(0.1)(x)
+        x = layers.Dense(64, activation="relu", name="neck_2")(x)
 
-        model.compile(
-            optimizer="adam",
-            loss={
-                "max_temp_anomaly": "categorical_crossentropy",
-                "min_temp_anomaly": "categorical_crossentropy"
-            },
-            metrics={
-                "max_temp_anomaly": metrics,
-                "min_temp_anomaly": metrics
-            }
-        )
+        # 6. Dual Heads
+        output_max = layers.Dense(self.area.temp_buckets, activation="softmax", name="max_temp_anomaly")(x)
+        output_min = layers.Dense(self.area.temp_buckets, activation="softmax", name="min_temp_anomaly")(x)
+
+        model = Model(inputs=[live_input, context_input], outputs=[output_max, output_min])
+        
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001)
+        metrics = ["accuracy", tf.keras.metrics.TopKCategoricalAccuracy(k=3, name="top_3_acc")]
+        model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=metrics)
         
         return model
 
     def summary(self):
         self.model.summary()
-
-    def train(self, X, y_max, y_min, epochs=50, batch_size=32, validation_split=0.2, callbacks=None):
-        return self.model.fit(
-            X, 
-            {"max_temp_anomaly": y_max, "min_temp_anomaly": y_min},
-            epochs=epochs,
-            batch_size=batch_size,
-            validation_split=validation_split,
-            callbacks=callbacks
-        )
 
     def predict_probs(self, X):
         return self.model.predict(X)

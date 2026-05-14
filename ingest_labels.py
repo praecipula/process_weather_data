@@ -11,7 +11,7 @@ Usage:
 import requests
 import pandas as pd
 import argparse
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from lib.db import engine
 from lib.weather_model import SummaryFcstModel
 from sqlalchemy.dialects.sqlite import insert
@@ -74,7 +74,8 @@ def ingest_labels(df: pd.DataFrame, station_code: str):
             
             if pd.isna(row['day']): continue
             
-            obs_date = datetime.strptime(row['day'], "%Y-%m-%d")
+            # Explicitly mark as UTC to satisfy the ISO8601DateTime invariant
+            obs_date = datetime.strptime(row['day'], "%Y-%m-%d").replace(tzinfo=timezone.utc)
             
             record = {
                 "station_code": station_code,
