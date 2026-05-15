@@ -90,10 +90,10 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   
   # Build and run the Docker container using docker-compose
   echo '[INFO] Building Docker image...' && \
-  docker-compose build && \
+  sudo docker-compose build && \
   
   echo '[INFO] Running GenCast prediction via Papermill (Reference Logic)...' && \
-  docker-compose run --rm \
+  sudo docker-compose run --rm \
     -e JAX_PLATFORM_NAME=tpu \
     -e JAX_PLATFORM_MODE=tpu_driver \
     gencast-worker \
