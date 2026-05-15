@@ -135,6 +135,15 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     ds_merged = ds_merged.expand_dims('batch')
     ds_merged = ds_merged.assign_coords(batch=[0])
 
+    # --- CRITICAL FIX 4: Strip conflicting metadata ---
+    # This prevents the 'failed to prevent overwriting existing key dtype' error
+    for var in list(ds_merged.coords) + list(ds_merged.data_vars):
+        ds_merged[var].encoding = {}
+        # Remove attributes that xarray uses for encoding
+        for attr in ['dtype', 'units', 'calendar']:
+            if attr in ds_merged[var].attrs:
+                del ds_merged[var].attrs[attr]
+
     # Drop ERA5T 'expver' if it exists
     if 'expver' in ds_merged.coords:
         ds_merged = ds_merged.drop_vars('expver')
