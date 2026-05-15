@@ -28,6 +28,7 @@ RUN pip install --no-cache-dir \
     xarray \
     netcdf4 \
     h5netcdf \
+    h5py \
     pandas \
     matplotlib \
     absl-py \
