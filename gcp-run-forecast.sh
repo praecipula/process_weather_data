@@ -93,7 +93,7 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     -e JAX_PLATFORM_NAME=tpu \
     -e JAX_PLATFORM_MODE=tpu_driver \
     gencast-worker \
-    python graphcast/scripts/run_gencast.py \
+    python run_gencast_inference.py \
     --input_data_path=\"/mnt/gcs_mount_point/era5_input/\" \
     --output_data_path=\"/mnt/gcs_mount_point/gencast_output/\" \
     --model_path=\"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \

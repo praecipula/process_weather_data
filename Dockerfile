@@ -3,8 +3,6 @@
 FROM python:3.10-slim-bookworm
 
 # Install essential system dependencies
-# These include tools needed for cloning Git repos, building Python packages,
-# and supporting NetCDF/HDF5 which are common for scientific data.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -14,24 +12,15 @@ RUN apt-get update && \
     libssl-dev \
     libnetcdf-dev \
     hdf5-tools \
-    # Clean up APT cache to reduce image size
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory to /app
-WORKDIR /app
+# Install the GraphCast library into /opt to avoid volume mount overwrite
+WORKDIR /opt
+RUN git clone https://github.com/google-deepmind/graphcast.git
+WORKDIR /opt/graphcast
 
-# Clone the google-deepmind/graphcast repository
-# This repository contains the GenCast source code.
-RUN git clone https://github.com/google-deepmind/graphcast.git /app/graphcast
-
-# Set the working directory to the cloned repository
-WORKDIR /app/graphcast
-
-# Install Python dependencies
-# Ensure pip is up-to-date
+# Install dependencies and the library itself
 RUN pip install --no-cache-dir --upgrade pip
-
-# Install JAX with TPU support.
 RUN pip install --no-cache-dir \
     "jax[tpu]>=0.4.23" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
     dm-haiku \
@@ -42,7 +31,15 @@ RUN pip install --no-cache-dir \
     matplotlib \
     absl-py \
     numpy \
-    scipy
+    scipy \
+    cartopy \
+    dask
 
-# Set default command (can be overridden by docker-compose run)
+# Install the graphcast package in editable mode
+RUN pip install -e .
+
+# Set working directory to /app (where user code will be mounted)
+WORKDIR /app
+
+# Set default command
 CMD ["/bin/bash"]
