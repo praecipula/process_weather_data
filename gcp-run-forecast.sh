@@ -62,8 +62,13 @@ log_info "SSHing into VM ($TPU_NAME) to perform setup and run GenCast."
 gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command="
   echo '--- VM Setup Start ---' && \
   
-  # Wait for background updates to finish
-  echo '[INFO] Waiting for background apt-get updates to release the lock...' && \
+  # Disable background updates to free up the package manager
+  echo '[INFO] Disabling background updates...' && \
+  sudo systemctl stop unattended-upgrades && \
+  sudo systemctl disable unattended-upgrades && \
+  
+  # Wait for any in-progress background updates to finish
+  echo '[INFO] Waiting for any remaining apt-get locks to be released...' && \
   while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done && \
   
   # Update apt-get and install necessary tools
