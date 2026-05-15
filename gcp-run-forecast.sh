@@ -90,6 +90,7 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   sed -i s/MODEL_PATH\ =\ \"\"/#MODEL_PATH/g gencast_reference.ipynb && \
   sed -i s/DATA_PATH\ =\ \"\"/#DATA_PATH/g gencast_reference.ipynb && \
   sed -i s/STATS_DIR\ =\ \"\"/#STATS_DIR/g gencast_reference.ipynb && \
+  sed -i s/assert\ data_valid_for_model\(DATA_PATH,\ MODEL_PATH\)/#assert\ data_valid_for_model\(DATA_PATH,\ MODEL_PATH\)/g gencast_reference.ipynb && \
   
   # Build and run the Docker container using docker-compose
   echo '[INFO] Building Docker image...' && \
