@@ -85,7 +85,7 @@ def download_era5(client, target_datetime, output_dir):
     return atmos_file, surface_file
 
 def package_data(atmos_path, surface_path, output_path):
-    """Merges and renames dimensions to match DeepMind requirements."""
+    """Merges and renames dimensions/variables to match DeepMind requirements."""
     print("Packaging and normalizing datasets...")
     ds_atmos = xr.open_dataset(atmos_path)
     ds_surface = xr.open_dataset(surface_path)
@@ -93,14 +93,34 @@ def package_data(atmos_path, surface_path, output_path):
     # Merge them into one dataset
     ds_merged = xr.merge([ds_atmos, ds_surface])
     
-    # --- CRITICAL FIX: Rename dimensions to match old CDS/DeepMind standards ---
-    rename_map = {}
-    if 'valid_time' in ds_merged.dims: rename_map['valid_time'] = 'time'
-    if 'pressure_level' in ds_merged.dims: rename_map['pressure_level'] = 'level'
+    # --- CRITICAL FIX 1: Rename dimensions to match old CDS/DeepMind standards ---
+    dim_rename = {}
+    if 'valid_time' in ds_merged.dims: dim_rename['valid_time'] = 'time'
+    if 'pressure_level' in ds_merged.dims: dim_rename['pressure_level'] = 'level'
     
-    if rename_map:
-        print(f"Renaming dimensions: {rename_map}")
-        ds_merged = ds_merged.rename(rename_map)
+    # --- CRITICAL FIX 2: Rename variables to match DeepMind's long names ---
+    var_rename = {
+        'z': 'geopotential',
+        't': 'temperature',
+        'q': 'specific_humidity',
+        'u': 'u_component_of_wind',
+        'v': 'v_component_of_wind',
+        't2m': '2m_temperature',
+        'sp': 'surface_pressure',
+        'u10': '10m_u_component_of_wind',
+        'v10': '10m_v_component_of_wind'
+    }
+    
+    # Only rename if the short name exists in the dataset
+    actual_var_rename = {k: v for k, v in var_rename.items() if k in ds_merged.data_vars}
+    
+    if dim_rename:
+        print(f"Renaming dimensions: {dim_rename}")
+        ds_merged = ds_merged.rename(dim_rename)
+    
+    if actual_var_rename:
+        print(f"Renaming variables: {actual_var_rename}")
+        ds_merged = ds_merged.rename(actual_var_rename)
 
     # Drop ERA5T 'expver' if it exists (causes merge conflicts later)
     if 'expver' in ds_merged.coords:
