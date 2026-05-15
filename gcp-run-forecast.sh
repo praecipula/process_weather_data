@@ -87,9 +87,9 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   # Download the official reference notebook
   echo '[INFO] Fetching official GenCast reference notebook...' && \
   curl -o gencast_reference.ipynb https://raw.githubusercontent.com/google-deepmind/graphcast/main/gencast_demo_cloud_vm.ipynb && \
-  sed -i "s/MODEL_PATH = \\\"\\\"/# MODEL_PATH = \\\"\\\"/g" gencast_reference.ipynb && \
-  sed -i "s/DATA_PATH = \\\"\\\"/# DATA_PATH = \\\"\\\"/g" gencast_reference.ipynb && \
-  sed -i "s/STATS_DIR = \\\"\\\"/# STATS_DIR = \\\"\\\"/g" gencast_reference.ipynb && \
+  sed -i s/MODEL_PATH\ =\ \"\"/#MODEL_PATH/g gencast_reference.ipynb && \
+  sed -i s/DATA_PATH\ =\ \"\"/#DATA_PATH/g gencast_reference.ipynb && \
+  sed -i s/STATS_DIR\ =\ \"\"/#STATS_DIR/g gencast_reference.ipynb && \
   
   # Build and run the Docker container using docker-compose
   echo '[INFO] Building Docker image...' && \
