@@ -19,6 +19,7 @@ summary.yaml
 
 # Cloud/Infrastructure Artifacts
 quota.json
+.cdsapirc
 
 # Environment and IDE
 .vscode/

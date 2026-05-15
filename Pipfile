@@ -17,6 +17,10 @@ scipy = "*"
 rich = "*"
 pyyaml = "*"
 graphcast = "*"
+cdsapi = "*"
+google-cloud-storage = "*"
+xarray = "*"
+netcdf4 = "*"
 
 [requires]
 python_version = "3.11"

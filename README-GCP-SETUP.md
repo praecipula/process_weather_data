@@ -145,3 +145,41 @@ This is the main orchestration script. It will handle:
 *   Spinning down and deleting the VM and TPU to save costs.
 
 This script encapsulates the entire ephemeral workflow.
+
+---
+
+## 9. Data Ingestion Strategy
+
+To run a forecast, GenCast requires a global snapshot of the atmosphere at two time steps: $T$ and $T-6$ hours.
+
+### ERA5: The "Holdout" Test Set
+*   **Training Window:** DeepMind trained GenCast on data from **1979 to 2018**.
+*   **Holdout Group:** Any data from **2019 to Present** is technically a "holdout" and is perfect for testing the model's accuracy on unseen weather.
+*   **Availability:**
+    *   **ERA5 (Final):** 2-3 month delay.
+    *   **ERA5T (Preliminary):** **5-day delay**.
+*   **Usage:** Perfect for backtesting and "walking" the model through past events.
+
+### HRES: Real-Time Operational Data
+*   **Purpose:** For actual Kalshi arbitrage/betting, we cannot wait 5 days for ERA5T.
+*   **Source:** ECMWF HRES (High Resolution Forecast) initialization data.
+*   **Usage:** This provides the 0-hour latency needed for production runs.
+
+### One-Time Setup: Copernicus CDS API
+You must register for an account to download ERA5 data automatically via Python.
+
+1.  **Register:** Create an account at [Copernicus Climate Data Store (CDS)](https://cds.climate.copernicus.eu/).
+2.  **API Key:** Go to your profile page and find your **UID** and **API Key**.
+3.  **Local Credentials:** Create a file named `.cdsapirc` in your home directory (`~/.cdsapirc`) with the following content:
+    ```text
+    url: https://cds.climate.copernicus.eu/api/v2
+    key: YOUR_UID:YOUR_API_KEY
+    ```
+4.  **Accept Terms:** Ensure you have accepted the "Terms of Use" for the ERA5 dataset on the CDS website.
+
+### Future Ingestion Script
+We will build an `ingest_era5.py` script that uses the `cdsapi` library to:
+1.  Request the 0.25° grid for the required 13 pressure levels.
+2.  Package the $T$ and $T-6$ snapshots into a single `input_batch.nc` file.
+3.  Upload the file to `gs://overengineeredweather-run-data/era5_input/`.
+4.  Trigger the `gcp-run-forecast.sh` script.
