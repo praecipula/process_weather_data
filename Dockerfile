@@ -1,6 +1,6 @@
 # Dockerfile for GenCast Worker
 
-FROM python:3.10-slim-buster
+FROM python:3.10-slim-bookworm
 
 # Install essential system dependencies
 # These include tools needed for cloning Git repos, building Python packages,
