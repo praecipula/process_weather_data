@@ -43,7 +43,7 @@ You'll need a service account for your ephemeral VM to securely access GCS and T
 1.  **Create Service Account:**
     *   Go to [IAM & Admin -> Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts).
     *   Click "CREATE SERVICE ACCOUNT."
-    *   Give it a name (e.g., `gencast-runner`).
+    *   Give it a name (e.g., `runnerserviceacct`).
     *   Click "DONE." (You don't need to grant roles here yet).
 
 2.  **Grant Permissions to the Service Account:**
