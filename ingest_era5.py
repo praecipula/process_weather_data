@@ -128,8 +128,10 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     if raw_time_dim != 'time':
         ds_merged = ds_merged.rename({raw_time_dim: 'time'})
     
-    # 4. Overwrite the 'time' coordinate values with the timedeltas
-    ds_merged['time'] = offsets
+    # 4. OVERWRITE 'time' as raw integers (nanoseconds)
+    # This prevents xarray from trying to "decode" it on the other end
+    print("  -> Converting 'time' to raw int64 nanoseconds...")
+    ds_merged['time'] = offsets.astype('int64')
     
     # --- CRITICAL FIX 3: Add the 'batch' dimension ---
     ds_merged = ds_merged.expand_dims('batch')
@@ -139,24 +141,13 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     # This prevents the 'failed to prevent overwriting existing key dtype' error
     print(f"Sanitizing NetCDF metadata for variables: {list(ds_merged.variables)}")
     for var in ds_merged.variables:
-        # Clear encoding
+        # Clear ALL encoding and attributes for this variable
         ds_merged[var].encoding = {}
-        
-        # Surgically filter attributes
-        bad_attrs = ['dtype', 'units', 'calendar', 'missing_value', '_FillValue']
-        current_attrs = ds_merged[var].attrs
-        new_attrs = {k: v for k, v in current_attrs.items() if k not in bad_attrs}
-        
-        if len(new_attrs) < len(current_attrs):
-            removed = [k for k in current_attrs if k in bad_attrs]
-            print(f"  -> {var}: Removed {removed}")
-        
-        ds_merged[var].attrs = new_attrs
+        ds_merged[var].attrs = {}
 
     # Double-check 'time' specifically
-    if 'time' in ds_merged.variables:
-        ds_merged['time'].encoding = {}
-        print("  -> Confirmed 'time' encoding cleared.")
+    ds_merged['time'].encoding = {}
+    ds_merged['time'].attrs = {}
 
     # Drop ERA5T 'expver' if it exists
     if 'expver' in ds_merged.coords:
@@ -167,6 +158,7 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     if os.path.exists(output_path):
         os.remove(output_path)
         
+    # Write using the most basic NetCDF4 settings
     ds_merged.to_netcdf(output_path)
     print(f"Packaged file created and sanitized: {output_path}")
 
