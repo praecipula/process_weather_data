@@ -8,12 +8,6 @@ services:
       - .:/app # Mount the Git repository into the container
       - /mnt/gcs_mount_point:/mnt/gcs_mount_point:rshared # Mount host's GCS Fuse mount point
     working_dir: /app
-    environment:
-      # Placeholder for JAX/TPU environment variables.
-      # Actual values might be set by the orchestration script or specific Dockerfile setup.
-      # For example:
-      # - JAX_PLATFORM_NAME=tpu
-      # - JAX_TPU_MAX_MEM=...
     command: ["/bin/bash", "-c", "echo 'GenCast prediction script will execute here.' && sleep infinity"]
     # Keep container alive for debugging if needed, 'command' will be overridden by 'docker-compose run'
     stdin_open: true
