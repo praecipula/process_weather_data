@@ -137,19 +137,26 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
 
     # --- CRITICAL FIX 4: Strip conflicting metadata ---
     # This prevents the 'failed to prevent overwriting existing key dtype' error
-    for var in list(ds_merged.coords) + list(ds_merged.data_vars):
+    print("Sanitizing NetCDF metadata...")
+    for var in ds_merged.variables:
         ds_merged[var].encoding = {}
-        # Remove attributes that xarray uses for encoding
-        for attr in ['dtype', 'units', 'calendar']:
+        # Surgically remove any encoding-related attributes
+        for attr in ['dtype', 'units', 'calendar', 'missing_value', '_FillValue']:
             if attr in ds_merged[var].attrs:
+                print(f"  -> Removing {attr} from {var}")
                 del ds_merged[var].attrs[attr]
 
     # Drop ERA5T 'expver' if it exists
     if 'expver' in ds_merged.coords:
+        print("Dropping 'expver' coordinate...")
         ds_merged = ds_merged.drop_vars('expver')
         
+    # Ensure local file is overwritten
+    if os.path.exists(output_path):
+        os.remove(output_path)
+        
     ds_merged.to_netcdf(output_path)
-    print(f"Packaged file created: {output_path}")
+    print(f"Packaged file created and sanitized: {output_path}")
 
 def upload_to_gcs(local_path, bucket_name, gcs_path):
     """Uploads the file to Google Cloud Storage."""
