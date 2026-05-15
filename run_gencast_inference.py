@@ -22,17 +22,27 @@ def run_inference(model_path, stats_path, input_data_path, output_data_path):
     with open(model_path, "rb") as f:
         ckpt = checkpoint.load(f, gencast.CheckPoint)
         params = ckpt.params
-        model_config = ckpt.model_config
         task_config = ckpt.task_config
+        # GenCast-specific architecture components
+        denoiser_arch = ckpt.denoiser_architecture_config
+        sampler_conf = ckpt.sampler_config
+        noise_conf = ckpt.noise_config
+        noise_enc_conf = ckpt.noise_encoder_config
 
     print(f"Loading normalization stats from: {stats_path}")
     diffs_stddev_by_level = xr.open_dataset(os.path.join(stats_path, "diffs_stddev_by_level.nc"))
     mean_by_level = xr.open_dataset(os.path.join(stats_path, "mean_by_level.nc"))
     stddev_by_level = xr.open_dataset(os.path.join(stats_path, "stddev_by_level.nc"))
 
-    # Build the GenCast model
+    # Build the GenCast model with all diffusion components
     def construct_fn(inputs, targets_template):
-        model = gencast.GenCast(model_config, task_config)
+        model = gencast.GenCast(
+            task_config=task_config,
+            denoiser_architecture_config=denoiser_arch,
+            sampler_config=sampler_conf,
+            noise_config=noise_conf,
+            noise_encoder_config=noise_enc_conf
+        )
         return model(inputs, targets_template)
 
     # Wrap for autoregressive prediction
@@ -54,7 +64,7 @@ def run_inference(model_path, stats_path, input_data_path, output_data_path):
     print("Executing GenCast Ensemble Forecast (50 members)...")
     rng = jax.random.PRNGKey(42)
     
-    # Run the forecast (params only, no state)
+    # Run the forecast (GenCast uses empty state)
     predictions = predictor.predict(params, {}, rng, inputs)
 
     print(f"Saving forecast results to: {output_data_path}")
