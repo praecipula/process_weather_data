@@ -91,15 +91,12 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     git clone \"$REPO_URL\" /app && cd /app && git checkout \"$GIT_BRANCH\"
   fi && \
   
-  # Download and patch notebook
+  # Download and patch reference notebook
   echo '[INFO] Fetching and patching reference notebook...' && \
   curl -s -o gencast_reference.ipynb https://raw.githubusercontent.com/google-deepmind/graphcast/main/gencast_demo_cloud_vm.ipynb && \
   ln -sf \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \"GenCast 0p25deg Operational <2022.npz\" && \
   ln -sf \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" && \
-  sed -i \"s|MODEL_PATH = \\\"\\\"|MODEL_PATH = \\\"GenCast 0p25deg Operational <2022.npz\\\"|g\" gencast_reference.ipynb && \
-  sed -i \"s|DATA_PATH = \\\"\\\"|DATA_PATH = \\\"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\\\"|g\" gencast_reference.ipynb && \
-  sed -i \"s|STATS_DIR = \\\"\\\"|STATS_DIR = \\\"/mnt/gcs_mount_point/stats/\\\"|g\" gencast_reference.ipynb && \
-  sed -i \"s|num_ensemble_members = 8|num_ensemble_members = 50|g\" gencast_reference.ipynb && \
+  python3 patch_notebook.py gencast_reference.ipynb \"${TARGET_DATE}\" && \
   
   # Build and Run
   echo '[INFO] Building and running GenCast...' && \
