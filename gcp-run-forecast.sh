@@ -104,10 +104,18 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   # Download the official reference notebook
   echo '[INFO] Fetching official GenCast reference notebook...' && \
   curl -o gencast_reference.ipynb https://raw.githubusercontent.com/google-deepmind/graphcast/main/gencast_demo_cloud_vm.ipynb && \
-  sed -i s/MODEL_PATH\ =\ \"\"/#MODEL_PATH/g gencast_reference.ipynb && \
-  sed -i s/DATA_PATH\ =\ \"\"/#DATA_PATH/g gencast_reference.ipynb && \
-  sed -i s/STATS_DIR\ =\ \"\"/#STATS_DIR/g gencast_reference.ipynb && \
-  sed -i s/assert\ data_valid_for_model\(DATA_PATH,\ MODEL_PATH\)/#assert\ data_valid_for_model\(DATA_PATH,\ MODEL_PATH\)/g gencast_reference.ipynb && \
+  
+  # Patch the notebook directly (bypassing Papermill tagging bugs)
+  # We use symlinks to bypass the notebook's brittle filename parsing logic
+  echo '[INFO] Creating symlinks to satisfy notebook filename parsing...' && \
+  ln -s \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \"GenCast 0p25deg Operational <2022.npz\" && \
+  ln -s \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" && \
+  
+  echo '[INFO] Patching notebook logic and paths...' && \
+  sed -i "s|MODEL_PATH = \\\"\\\"|MODEL_PATH = \\\"GenCast 0p25deg Operational <2022.npz\\\"|g" gencast_reference.ipynb && \
+  sed -i "s|DATA_PATH = \\\"\\\"|DATA_PATH = \\\"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\\\"|g" gencast_reference.ipynb && \
+  sed -i "s|STATS_DIR = \\\"\\\"|STATS_DIR = \\\"/mnt/gcs_mount_point/stats/\\\"|g" gencast_reference.ipynb && \
+  sed -i "s|num_ensemble_members = 8|num_ensemble_members = 50|g" gencast_reference.ipynb && \
   
   # Build and run the Docker container using docker-compose
   echo '[INFO] Building Docker image...' && \
@@ -118,11 +126,7 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     -e JAX_PLATFORM_NAME=tpu \
     -e JAX_PLATFORM_MODE=tpu_driver \
     gencast-worker \
-    papermill gencast_reference.ipynb gencast_execution_log.ipynb \
-    -p MODEL_PATH \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \
-    -p DATA_PATH \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \
-    -p STATS_DIR \"/mnt/gcs_mount_point/stats/\" \
-    -p num_ensemble_members 50 && \
+    papermill gencast_reference.ipynb gencast_execution_log.ipynb && \
   
   echo '--- VM Setup End ---' && \
   echo '[INFO] GenCast execution complete. Powering off VM.' && \
