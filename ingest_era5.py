@@ -102,6 +102,7 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     rename_map = {
         'latitude': 'lat',
         'longitude': 'lon',
+        'pressure_level': 'level',
         'z': 'geopotential',
         't': 'temperature',
         'q': 'specific_humidity',

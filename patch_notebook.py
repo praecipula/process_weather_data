@@ -20,13 +20,15 @@ def patch_notebook(nb_path, target_date):
     with open(nb_path, 'r') as f:
         nb = json.load(f)
 
-    # We use simpler substrings to be robust to spacing variations
+    # Substrings to search for and comment out/replace
     replacements = {
-        'MODEL_PATH = ""': 'MODEL_PATH = "GenCast 0p25deg Operational <2022.npz"',
+        'MODEL_PATH = ""': f'MODEL_PATH = "GenCast 0p25deg Operational <2022.npz"',
         'DATA_PATH = ""': f'DATA_PATH = "source-era5_date-{target_date}_res-0.25_levels-13.nc"',
         'STATS_DIR = ""': 'STATS_DIR = "/mnt/gcs_mount_point/stats/"',
         'num_ensemble_members = 8': 'num_ensemble_members = 50',
-        'assert data_valid_for_model': '# assert bypassed (Operational vs ERA5 check)'
+        'assert data_valid_for_model': '# assert bypassed (Operational vs ERA5 check)',
+        'plot_data(': '# plot_data bypassed (headless)',
+        'display.display(': '# display.display bypassed (headless)'
     }
 
     found_flags = {k: False for k in replacements}
@@ -38,11 +40,9 @@ def patch_notebook(nb_path, target_date):
                 modified_line = line
                 for target, replacement in replacements.items():
                     if target in line:
-                        # For the assertion, we want to replace the whole line
-                        if target == 'assert data_valid_for_model':
-                            modified_line = f"    {replacement}\n"
-                        else:
-                            modified_line = line.replace(target, replacement)
+                        # Comment out the whole line
+                        indent = line[:len(line) - len(line.lstrip())]
+                        modified_line = f"{indent}{replacement} # {line.strip()}\n"
                         found_flags[target] = True
                 new_source.append(modified_line)
             cell['source'] = new_source
