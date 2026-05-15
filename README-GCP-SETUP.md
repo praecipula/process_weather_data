@@ -183,3 +183,22 @@ We will build an `ingest_era5.py` script that uses the `cdsapi` library to:
 2.  Package the $T$ and $T-6$ snapshots into a single `input_batch.nc` file.
 3.  Upload the file to `gs://overengineeredweather-run-data/era5_input/`.
 4.  Trigger the `gcp-run-forecast.sh` script.
+
+---
+
+## 10. Upstream Patches and Codemods (`patch_notebook.py`)
+
+Because the DeepMind repository is primarily a research library, it often contains hardcoded paths, interactive widgets, or strict validation logic that is incompatible with an automated, headless pipeline.
+
+### The Invariant
+**All surgical modifications to the upstream source code must live in `patch_notebook.py`.**
+
+This script acts as our "inline-diff factory." Instead of maintaining a fork of the DeepMind repository, we fetch the `main` branch dynamically and apply our changes on the fly. 
+
+**Use this script for:**
+*   **Path Injection**: Replacing empty strings (`MODEL_PATH = ""`) with our mounted GCS paths.
+*   **Parameter Overrides**: Hardcoding ensemble counts or seed values.
+*   **Bypassing UI logic**: Commenting out `ipywidgets` or interactive `print` statements that fail in headless environments.
+*   **API Adaptation**: Renaming variables or dimensions if the upstream API changes.
+
+By centralizing these "codemods" in one Python script, we maintain a clear audit trail of how we've adapted the research code for production use.
