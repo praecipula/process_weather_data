@@ -14,6 +14,12 @@ REPO_URL="https://github.com/praecipula/process_weather_data.git" # URL to your 
 GIT_BRANCH="main"                            # Git branch to checkout
 SERVICE_ACCOUNT_EMAIL="runnerserviceacct@overengineeredweather.iam.gserviceaccount.com" # Service Account Email
 
+# --- Command Line Arguments ---
+TARGET_DATE="2024-05-10"
+if [ "$1" == "--date" ] && [ -n "$2" ]; then
+  TARGET_DATE="$2"
+fi
+
 # --- Helper Functions for Robustness ---
 function log_info {
   echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') $1"
@@ -103,7 +109,7 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     gencast-worker \
     papermill gencast_reference.ipynb gencast_execution_log.ipynb \
     -p MODEL_PATH \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \
-    -p DATA_PATH \"/mnt/gcs_mount_point/era5_input/input_batch.nc\" \
+    -p DATA_PATH \"/mnt/gcs_mount_point/era5_input/source-era5_date-\${TARGET_DATE}_res-0.25_levels-13.nc\" \
     -p STATS_DIR \"/mnt/gcs_mount_point/stats/\" \
     -p num_ensemble_members 50 && \
   

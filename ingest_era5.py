@@ -33,17 +33,19 @@ SURFACE_VARS = [
 ]
 
 def download_era5(client, target_datetime, output_dir):
-    """Downloads snapshots for T and T-6 hours."""
+    """Downloads snapshots for T-6, T, and T+6 hours."""
     t0 = target_datetime
     t_minus_6 = t0 - datetime.timedelta(hours=6)
+    t_plus_6 = t0 + datetime.timedelta(hours=6)
     
-    times = [t_minus_6, t0]
+    times = [t_minus_6, t0, t_plus_6]
     
     # CDS API requires strings
-    date_str = t0.strftime('%Y-%m-%d')
-    time_strs = [t.strftime('%H:%M') for t in times]
+    # We take the unique dates and times
+    unique_dates = sorted(list(set([t.strftime('%Y-%m-%d') for t in times])))
+    time_strs = sorted(list(set([t.strftime('%H:%M') for t in times])))
     
-    print(f"Requesting snapshots for: {date_str} at {time_strs}")
+    print(f"Requesting snapshots for: {unique_dates} at {time_strs}")
     
     # 1. Download Pressure Level Data
     atmos_file = os.path.join(output_dir, "atmos_raw.nc")
@@ -54,9 +56,9 @@ def download_era5(client, target_datetime, output_dir):
             'format': 'netcdf',
             'variable': ATMOS_VARS,
             'pressure_level': PRESSURE_LEVELS,
-            'year': t0.year,
-            'month': t0.month,
-            'day': t0.day,
+            'year': [t.year for t in times],
+            'month': [t.month for t in times],
+            'day': [t.day for t in times],
             'time': time_strs,
         },
         atmos_file
@@ -70,9 +72,9 @@ def download_era5(client, target_datetime, output_dir):
             'product_type': 'reanalysis',
             'format': 'netcdf',
             'variable': SURFACE_VARS,
-            'year': t0.year,
-            'month': t0.month,
-            'day': t0.day,
+            'year': [t.year for t in times],
+            'month': [t.month for t in times],
+            'day': [t.day for t in times],
             'time': time_strs,
         },
         surface_file
@@ -81,18 +83,28 @@ def download_era5(client, target_datetime, output_dir):
     return atmos_file, surface_file
 
 def package_data(atmos_path, surface_path, output_path):
-    """Merges atmospheric and surface datasets into a GenCast-ready format."""
-    print("Packaging datasets...")
+    """Merges and renames dimensions to match DeepMind requirements."""
+    print("Packaging and normalizing datasets...")
     ds_atmos = xr.open_dataset(atmos_path)
     ds_surface = xr.open_dataset(surface_path)
     
     # Merge them into one dataset
-    # xarray will automatically align them by time, lat, and lon
     ds_merged = xr.merge([ds_atmos, ds_surface])
     
-    # Ensure the coordinate names match what DeepMind expects if necessary
-    # (Usually ERA5 defaults are fine, but some models expect 'latitude' vs 'lat')
+    # --- CRITICAL FIX: Rename dimensions to match old CDS/DeepMind standards ---
+    rename_map = {}
+    if 'valid_time' in ds_merged.dims: rename_map['valid_time'] = 'time'
+    if 'pressure_level' in ds_merged.dims: rename_map['pressure_level'] = 'level'
     
+    if rename_map:
+        print(f"Renaming dimensions: {rename_map}")
+        ds_merged = ds_merged.rename(rename_map)
+
+    # Drop ERA5T 'expver' if it exists (causes merge conflicts later)
+    if 'expver' in ds_merged.coords:
+        print("Dropping 'expver' coordinate...")
+        ds_merged = ds_merged.drop_vars('expver')
+        
     ds_merged.to_netcdf(output_path)
     print(f"Packaged file created: {output_path}")
 
@@ -132,17 +144,20 @@ if __name__ == "__main__":
     try:
         atmos_raw, surface_raw = download_era5(c, target_dt, tmp_dir)
         
-        final_nc = os.path.join(tmp_dir, "input_batch.nc")
+        # Follow DeepMind Filename Convention: source-era5_date-YYYY-MM-DD_res-0.25_levels-13.nc
+        filename = f"source-era5_date-{args.date}_res-0.25_levels-13.nc"
+        final_nc = os.path.join(tmp_dir, filename)
+        
         package_data(atmos_raw, surface_raw, final_nc)
         
-        gcs_dest = "era5_input/input_batch.nc"
+        # Upload using the descriptive name
+        gcs_dest = f"era5_input/{filename}"
         upload_to_gcs(final_nc, args.bucket, gcs_dest)
+        
+        # Also upload to the 'input_batch.nc' alias for backward compatibility
+        upload_to_gcs(final_nc, args.bucket, "era5_input/input_batch.nc")
         
     except Exception as e:
         print(f"Error during ingestion: {e}")
     finally:
-        # Cleanup
         print("Cleaning up temporary files...")
-        # (Optional: uncomment to remove raw files after upload)
-        # for f in [atmos_raw, surface_raw, final_nc]:
-        #     if os.path.exists(f): os.remove(f)
