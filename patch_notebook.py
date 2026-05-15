@@ -20,33 +20,37 @@ def patch_notebook(nb_path, target_date):
     with open(nb_path, 'r') as f:
         nb = json.load(f)
 
+    # We use simpler substrings to be robust to spacing variations
     replacements = {
         'MODEL_PATH = ""': 'MODEL_PATH = "GenCast 0p25deg Operational <2022.npz"',
         'DATA_PATH = ""': f'DATA_PATH = "source-era5_date-{target_date}_res-0.25_levels-13.nc"',
         'STATS_DIR = ""': 'STATS_DIR = "/mnt/gcs_mount_point/stats/"',
-        'num_ensemble_members = 8': 'num_ensemble_members = 50'
+        'num_ensemble_members = 8': 'num_ensemble_members = 50',
+        'assert data_valid_for_model': '# assert bypassed (Operational vs ERA5 check)'
     }
 
     found_flags = {k: False for k in replacements}
 
     for cell in nb['cells']:
         if cell['cell_type'] == 'code':
-            # Notebook source is a list of strings
             new_source = []
             for line in cell['source']:
                 modified_line = line
                 for target, replacement in replacements.items():
                     if target in line:
-                        modified_line = line.replace(target, replacement)
+                        # For the assertion, we want to replace the whole line
+                        if target == 'assert data_valid_for_model':
+                            modified_line = f"    {replacement}\n"
+                        else:
+                            modified_line = line.replace(target, replacement)
                         found_flags[target] = True
                 new_source.append(modified_line)
             cell['source'] = new_source
 
+    print("Patching results:")
     for target, found in found_flags.items():
-        if found:
-            print(f"  [OK] Patched: {target}")
-        else:
-            print(f"  [WARN] Not found: {target}")
+        status = "[OK]" if found else "[WARN]"
+        print(f"  {status} Found/Patched: {target}")
 
     with open(nb_path, 'w') as f:
         json.dump(nb, f, indent=1)

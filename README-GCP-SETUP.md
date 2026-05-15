@@ -202,3 +202,23 @@ This script acts as our "inline-diff factory." Instead of maintaining a fork of 
 *   **API Adaptation**: Renaming variables or dimensions if the upstream API changes.
 
 By centralizing these "codemods" in one Python script, we maintain a clear audit trail of how we've adapted the research code for production use.
+
+---
+
+## 11. Transitioning to Operational Status (TODO Checklist)
+
+The current pipeline uses several "bypasses" to accelerate development and bypass brittle research-grade code. Before using this model for high-stakes Kalshi arbitrage, the following hardening steps are recommended:
+
+### [] Data & Science
+*   [ ] **Switch to ECMWF HRES**: Transition the `ingest_era5.py` logic to fetch real-time HRES analysis data to satisfy the "Operational" model's statistical bias requirements.
+*   [ ] **Restore Source Validation**: Once using HRES data, remove the `patch_notebook.py` rule that comments out the `data_valid_for_model` assertion.
+*   [ ] **Dynamic Forcing Generation**: Currently, we rely on the ERA5 download to provide solar forcings. Move to a local `solar_radiation.py` generator for true autonomy.
+
+### [] Pipeline & Automation
+*   [ ] **Filename Provenance**: Implement the symlink strategy for the input files so the "Source of Truth" in GCS keeps its descriptive DeepMind name.
+*   [ ] **Formal Parameterization**: Work with the upstream repository to add a formal `parameters` tag to the notebook, allowing `papermill` to work without surgical JSON patching.
+*   [ ] **SSH Key Hardening**: For a production environment, use a passphrase-protected key managed by a secure Secret Manager (like GCP Secret Manager) instead of a passphrase-less key.
+
+### [] Optimization
+*   [ ] **Bucket Regionalization**: If the pipeline permanently settles in `us-east5-a`, migrate the GCS bucket to the same region to eliminate the (very small) inter-region egress costs and latency.
+*   [ ] **Custom VM Image**: Create a custom Compute Engine image with Docker and GCS FUSE pre-installed to shave ~3 minutes off the spin-up time.
