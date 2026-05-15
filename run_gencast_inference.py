@@ -22,7 +22,6 @@ def run_inference(model_path, stats_path, input_data_path, output_data_path):
     with open(model_path, "rb") as f:
         ckpt = checkpoint.load(f, gencast.CheckPoint)
         params = ckpt.params
-        state = ckpt.state
         model_config = ckpt.model_config
         task_config = ckpt.task_config
 
@@ -46,8 +45,6 @@ def run_inference(model_path, stats_path, input_data_path, output_data_path):
     )
 
     print(f"Loading ERA5 input data from: {input_data_path}")
-    # We expect a single NetCDF file containing the T and T-6 snapshots
-    # In a real pipeline, this would be dynamically generated
     input_file = os.path.join(input_data_path, "input_batch.nc")
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Missing input batch file: {input_file}")
@@ -55,13 +52,10 @@ def run_inference(model_path, stats_path, input_data_path, output_data_path):
     inputs = xr.open_dataset(input_file)
 
     print("Executing GenCast Ensemble Forecast (50 members)...")
-    # This executes on the TPU
-    # In GenCast, we pass a random seed to generate the ensemble members
     rng = jax.random.PRNGKey(42)
     
-    # Run the forecast
-    # This is a simplified call; actual demo involves more state management
-    predictions = predictor.predict(params, state, rng, inputs)
+    # Run the forecast (params only, no state)
+    predictions = predictor.predict(params, {}, rng, inputs)
 
     print(f"Saving forecast results to: {output_data_path}")
     os.makedirs(output_data_path, exist_ok=True)
