@@ -62,66 +62,48 @@ log_info "SSHing into VM ($TPU_NAME) to perform setup and run GenCast."
 gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command="
   echo '--- VM Setup Start ---' && \
   
-  # Disable background updates to free up the package manager
-  echo '[INFO] Disabling background updates...' && \
-  sudo systemctl stop unattended-upgrades || true && \
-  sudo systemctl disable unattended-upgrades || true && \
+  # Release the apt lock and wait for availability
+  echo '[INFO] Preparing package manager (this may take a minute)...' && \
+  sudo systemctl stop unattended-upgrades >/dev/null 2>&1 || true && \
+  until sudo apt-get update >/dev/null 2>&1; do echo '  ...waiting for apt lock...'; sleep 10; done && \
   
-  # Wait for any in-progress background updates to finish
-  echo '[INFO] Waiting for any remaining apt-get locks to be released...' && \
-  while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done && \
-  
-  # Update apt-get and install necessary tools
-  echo '[INFO] Adding GCS FUSE repository...' && \
-  export GCSFUSE_REPO=gcsfuse-\$(lsb_release -c -s) && \
-  echo \"deb https://packages.cloud.google.com/apt \$GCSFUSE_REPO main\" | sudo tee /etc/apt/sources.list.d/gcsfuse.list || true && \
-  curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - || true && \
-  echo '[INFO] Updating apt-get and installing Git, Docker, Docker Compose, gcsfuse...' && \
-  sudo apt-get update && \
-  sudo apt-get remove -y containerd docker.io runc docker-ce docker-ce-cli containerd.io || true && \
+  # Install necessary tools (cleanup old docker first)
+  sudo apt-get remove -y containerd docker.io runc docker-ce docker-ce-cli containerd.io >/dev/null 2>&1 || true && \
   sudo apt-get install -y git gcsfuse docker-ce docker-ce-cli containerd.io docker-compose-plugin && \
 
-  # Ensure docker-compose command is available (alias to plugin if needed)
-  if ! command -v docker-compose &> /dev/null; then sudo ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose || true; fi && \
+  # Ensure docker-compose command is available
+  if ! command -v docker-compose &> /dev/null; then sudo ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose; fi && \
 
-  # Add the current user to the docker group
+  # Add current user to docker group
   sudo usermod -aG docker \$(whoami) || true && \
   
-  # Mount the GCS bucket using gcsfuse
-  echo '[INFO] Mounting GCS bucket gs://$BUCKET_NAME to /mnt/gcs_mount_point...' && \
+  # Mount GCS
+  echo '[INFO] Mounting GCS bucket...' && \
   sudo mkdir -p /mnt/gcs_mount_point && \
   sudo gcsfuse --implicit-dirs --uid=\$(id -u) --gid=\$(id -g) \"$BUCKET_NAME\" /mnt/gcs_mount_point || true && \
   
-  # Clone the GitHub repository
-  echo '[INFO] Cloning repository $REPO_URL...' && \
-  sudo rm -rf /app && \
-  sudo mkdir -p /app && \
-  sudo chown \$(whoami) /app && \
-  git clone \"$REPO_URL\" /app && \
-  cd /app && \
-  git checkout \"$GIT_BRANCH\" && \
+  # Sync Repo
+  echo '[INFO] Cloning/Updating repository...' && \
+  if [ -d /app/.git ]; then
+    cd /app && sudo git fetch --all && sudo git reset --hard origin/\"$GIT_BRANCH\"
+  else
+    sudo rm -rf /app && sudo mkdir -p /app && sudo chown \$(whoami) /app && \
+    git clone \"$REPO_URL\" /app && cd /app && git checkout \"$GIT_BRANCH\"
+  fi && \
   
-  # Download the official reference notebook
-  echo '[INFO] Fetching official GenCast reference notebook...' && \
-  curl -o gencast_reference.ipynb https://raw.githubusercontent.com/google-deepmind/graphcast/main/gencast_demo_cloud_vm.ipynb && \
-  
-  # Patch the notebook directly (bypassing Papermill tagging bugs)
-  # We use symlinks to bypass the notebook's brittle filename parsing logic
-  echo '[INFO] Creating symlinks to satisfy notebook filename parsing...' && \
+  # Download and patch notebook
+  echo '[INFO] Fetching and patching reference notebook...' && \
+  curl -s -o gencast_reference.ipynb https://raw.githubusercontent.com/google-deepmind/graphcast/main/gencast_demo_cloud_vm.ipynb && \
   ln -sf \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \"GenCast 0p25deg Operational <2022.npz\" && \
   ln -sf \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" && \
+  sed -i \"s|MODEL_PATH = \\\"\\\"|MODEL_PATH = \\\"GenCast 0p25deg Operational <2022.npz\\\"|g\" gencast_reference.ipynb && \
+  sed -i \"s|DATA_PATH = \\\"\\\"|DATA_PATH = \\\"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\\\"|g\" gencast_reference.ipynb && \
+  sed -i \"s|STATS_DIR = \\\"\\\"|STATS_DIR = \\\"/mnt/gcs_mount_point/stats/\\\"|g\" gencast_reference.ipynb && \
+  sed -i \"s|num_ensemble_members = 8|num_ensemble_members = 50|g\" gencast_reference.ipynb && \
   
-  echo '[INFO] Patching notebook logic and paths...' && \
-  sed -i "s|MODEL_PATH = \\\"\\\"|MODEL_PATH = \\\"GenCast 0p25deg Operational <2022.npz\\\"|g" gencast_reference.ipynb && \
-  sed -i "s|DATA_PATH = \\\"\\\"|DATA_PATH = \\\"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\\\"|g" gencast_reference.ipynb && \
-  sed -i "s|STATS_DIR = \\\"\\\"|STATS_DIR = \\\"/mnt/gcs_mount_point/stats/\\\"|g" gencast_reference.ipynb && \
-  sed -i "s|num_ensemble_members = 8|num_ensemble_members = 50|g" gencast_reference.ipynb && \
-  
-  # Build and run the Docker container using docker-compose
-  echo '[INFO] Building Docker image...' && \
-  sudo docker-compose build && \
-  
-  echo '[INFO] Running GenCast prediction via Papermill (Reference Logic)...' && \
+  # Build and Run
+  echo '[INFO] Building and running GenCast...' && \
+  sudo docker-compose build --quiet && \
   sudo docker-compose run --rm \
     -e JAX_PLATFORM_NAME=tpu \
     -e JAX_PLATFORM_MODE=tpu_driver \
@@ -129,7 +111,6 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     papermill gencast_reference.ipynb gencast_execution_log.ipynb && \
   
   echo '--- VM Setup End ---' && \
-  echo '[INFO] GenCast execution complete. Powering off VM.' && \
   sudo poweroff" || log_error "SSH command execution or GenCast run failed."
 
 log_info "GenCast Prediction Workflow finished."
