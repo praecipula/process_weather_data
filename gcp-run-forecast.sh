@@ -109,7 +109,7 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     gencast-worker \
     papermill gencast_reference.ipynb gencast_execution_log.ipynb \
     -p MODEL_PATH \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \
-    -p DATA_PATH \"/mnt/gcs_mount_point/era5_input/source-era5_date-\${TARGET_DATE}_res-0.25_levels-13.nc\" \
+    -p DATA_PATH \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \
     -p STATS_DIR \"/mnt/gcs_mount_point/stats/\" \
     -p num_ensemble_members 50 && \
   

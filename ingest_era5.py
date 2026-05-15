@@ -42,10 +42,12 @@ def download_era5(client, target_datetime, output_dir):
     
     # CDS API requires strings
     # We take the unique dates and times
-    unique_dates = sorted(list(set([t.strftime('%Y-%m-%d') for t in times])))
+    unique_years = sorted(list(set([str(t.year) for t in times])))
+    unique_months = sorted(list(set([str(t.month) for t in times])))
+    unique_days = sorted(list(set([str(t.day) for t in times])))
     time_strs = sorted(list(set([t.strftime('%H:%M') for t in times])))
     
-    print(f"Requesting snapshots for: {unique_dates} at {time_strs}")
+    print(f"Requesting snapshots for: Years {unique_years}, Months {unique_months}, Days {unique_days} at {time_strs}")
     
     # 1. Download Pressure Level Data
     atmos_file = os.path.join(output_dir, "atmos_raw.nc")
@@ -56,9 +58,9 @@ def download_era5(client, target_datetime, output_dir):
             'format': 'netcdf',
             'variable': ATMOS_VARS,
             'pressure_level': PRESSURE_LEVELS,
-            'year': [t.year for t in times],
-            'month': [t.month for t in times],
-            'day': [t.day for t in times],
+            'year': unique_years,
+            'month': unique_months,
+            'day': unique_days,
             'time': time_strs,
         },
         atmos_file
@@ -72,9 +74,9 @@ def download_era5(client, target_datetime, output_dir):
             'product_type': 'reanalysis',
             'format': 'netcdf',
             'variable': SURFACE_VARS,
-            'year': [t.year for t in times],
-            'month': [t.month for t in times],
-            'day': [t.day for t in times],
+            'year': unique_years,
+            'month': unique_months,
+            'day': unique_days,
             'time': time_strs,
         },
         surface_file
