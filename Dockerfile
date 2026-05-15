@@ -35,7 +35,9 @@ RUN pip install --no-cache-dir \
     cartopy \
     dask \
     papermill \
-    ipykernel
+    ipykernel \
+    ipywidgets \
+    tqdm
 
 # Register the kernel for Jupyter/Papermill
 RUN python -m ipykernel install --name python3 --display-name "Python 3"
