@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir \
     optax \
     xarray \
     netcdf4 \
+    h5netcdf \
     pandas \
     matplotlib \
     absl-py \
