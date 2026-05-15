@@ -33,7 +33,12 @@ RUN pip install --no-cache-dir \
     numpy \
     scipy \
     cartopy \
-    dask
+    dask \
+    papermill \
+    ipykernel
+
+# Register the kernel for Jupyter/Papermill
+RUN python -m ipykernel install --name python3 --display-name "Python 3"
 
 # Install the graphcast package in editable mode
 RUN pip install -e .

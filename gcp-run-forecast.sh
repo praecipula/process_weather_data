@@ -84,20 +84,24 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   cd /app && \
   git checkout \"$GIT_BRANCH\" && \
   
+  # Download the official reference notebook
+  echo '[INFO] Fetching official GenCast reference notebook...' && \
+  curl -o gencast_reference.ipynb https://raw.githubusercontent.com/google-deepmind/graphcast/main/gencast_demo_cloud_vm.ipynb && \
+  
   # Build and run the Docker container using docker-compose
   echo '[INFO] Building Docker image...' && \
   docker-compose build && \
   
-  echo '[INFO] Running GenCast prediction via Docker Compose...' && \
+  echo '[INFO] Running GenCast prediction via Papermill (Reference Logic)...' && \
   docker-compose run --rm \
     -e JAX_PLATFORM_NAME=tpu \
     -e JAX_PLATFORM_MODE=tpu_driver \
     gencast-worker \
-    python run_gencast_inference.py \
-    --input_data_path=\"/mnt/gcs_mount_point/era5_input/\" \
-    --output_data_path=\"/mnt/gcs_mount_point/gencast_output/\" \
-    --model_path=\"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \
-    --stats_path=\"/mnt/gcs_mount_point/stats/\" && \
+    papermill gencast_reference.ipynb gencast_execution_log.ipynb \
+    -p MODEL_PATH \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \
+    -p DATA_PATH \"/mnt/gcs_mount_point/era5_input/input_batch.nc\" \
+    -p STATS_DIR \"/mnt/gcs_mount_point/stats/\" \
+    -p num_ensemble_members 50 && \
   
   echo '--- VM Setup End ---' && \
   echo '[INFO] GenCast execution complete. Powering off VM.' && \
