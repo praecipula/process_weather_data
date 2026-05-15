@@ -20,30 +20,42 @@ def patch_notebook(nb_path, target_date):
     with open(nb_path, 'r') as f:
         nb = json.load(f)
 
-    # Substrings to search for and comment out/replace
+    # 1. Parameter Replacements
     replacements = {
-        'MODEL_PATH = ""': f'MODEL_PATH = "GenCast 0p25deg Operational <2022.npz"',
+        'MODEL_PATH = ""': 'MODEL_PATH = "GenCast 0p25deg Operational <2022.npz"',
         'DATA_PATH = ""': f'DATA_PATH = "source-era5_date-{target_date}_res-0.25_levels-13.nc"',
         'STATS_DIR = ""': 'STATS_DIR = "/mnt/gcs_mount_point/stats/"',
-        'num_ensemble_members = 8': 'num_ensemble_members = 50',
-        'assert data_valid_for_model': '# assert bypassed (Operational vs ERA5 check)',
-        'plot_data(': '# plot_data bypassed (headless)',
-        'display.display(': '# display.display bypassed (headless)'
+        'num_ensemble_members = 8': 'num_ensemble_members = 50'
     }
 
-    found_flags = {k: False for k in replacements}
+    # 2. Logic Bypasses (Bypass by commenting out)
+    bypasses = [
+        'assert data_valid_for_model',
+        'plot_data(',
+        'display.display(',
+        'animation.FuncAnimation'
+    ]
+
+    found_flags = {k: False for k in list(replacements.keys()) + bypasses}
 
     for cell in nb['cells']:
         if cell['cell_type'] == 'code':
             new_source = []
             for line in cell['source']:
                 modified_line = line
+                
+                # Apply replacements
                 for target, replacement in replacements.items():
                     if target in line:
-                        # Comment out the whole line
-                        indent = line[:len(line) - len(line.lstrip())]
-                        modified_line = f"{indent}{replacement} # {line.strip()}\n"
+                        modified_line = line.replace(target, replacement)
                         found_flags[target] = True
+                
+                # Apply bypasses (prefix with #)
+                for target in bypasses:
+                    if target in line:
+                        modified_line = f"# {modified_line}"
+                        found_flags[target] = True
+                        
                 new_source.append(modified_line)
             cell['source'] = new_source
 
