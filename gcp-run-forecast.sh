@@ -60,6 +60,12 @@ sleep 60 # Adjust this based on VM boot time if needed
 # 2. SSH into VM and execute setup/run commands
 log_info "SSHing into VM ($TPU_NAME) to perform setup and run GenCast."
 gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command="
+  echo '--- VM Setup Start ---' && \
+  
+  # Wait for background updates to finish
+  echo '[INFO] Waiting for background apt-get updates to release the lock...' && \
+  while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done && \
+  
   # Update apt-get and install necessary tools
   echo '[INFO] Adding GCS FUSE repository...' && \
   export GCSFUSE_REPO=gcsfuse-\$(lsb_release -c -s) && \
