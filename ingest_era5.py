@@ -137,14 +137,26 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
 
     # --- CRITICAL FIX 4: Strip conflicting metadata ---
     # This prevents the 'failed to prevent overwriting existing key dtype' error
-    print("Sanitizing NetCDF metadata...")
+    print(f"Sanitizing NetCDF metadata for variables: {list(ds_merged.variables)}")
     for var in ds_merged.variables:
+        # Clear encoding
         ds_merged[var].encoding = {}
-        # Surgically remove any encoding-related attributes
-        for attr in ['dtype', 'units', 'calendar', 'missing_value', '_FillValue']:
-            if attr in ds_merged[var].attrs:
-                print(f"  -> Removing {attr} from {var}")
-                del ds_merged[var].attrs[attr]
+        
+        # Surgically filter attributes
+        bad_attrs = ['dtype', 'units', 'calendar', 'missing_value', '_FillValue']
+        current_attrs = ds_merged[var].attrs
+        new_attrs = {k: v for k, v in current_attrs.items() if k not in bad_attrs}
+        
+        if len(new_attrs) < len(current_attrs):
+            removed = [k for k in current_attrs if k in bad_attrs]
+            print(f"  -> {var}: Removed {removed}")
+        
+        ds_merged[var].attrs = new_attrs
+
+    # Double-check 'time' specifically
+    if 'time' in ds_merged.variables:
+        ds_merged['time'].encoding = {}
+        print("  -> Confirmed 'time' encoding cleared.")
 
     # Drop ERA5T 'expver' if it exists
     if 'expver' in ds_merged.coords:
