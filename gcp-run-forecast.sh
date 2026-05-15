@@ -64,8 +64,8 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   
   # Disable background updates to free up the package manager
   echo '[INFO] Disabling background updates...' && \
-  sudo systemctl stop unattended-upgrades && \
-  sudo systemctl disable unattended-upgrades && \
+  sudo systemctl stop unattended-upgrades || true && \
+  sudo systemctl disable unattended-upgrades || true && \
   
   # Wait for any in-progress background updates to finish
   echo '[INFO] Waiting for any remaining apt-get locks to be released...' && \
@@ -74,23 +74,23 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   # Update apt-get and install necessary tools
   echo '[INFO] Adding GCS FUSE repository...' && \
   export GCSFUSE_REPO=gcsfuse-\$(lsb_release -c -s) && \
-  echo \"deb https://packages.cloud.google.com/apt \$GCSFUSE_REPO main\" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && \
-  curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - && \
+  echo \"deb https://packages.cloud.google.com/apt \$GCSFUSE_REPO main\" | sudo tee /etc/apt/sources.list.d/gcsfuse.list || true && \
+  curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - || true && \
   echo '[INFO] Updating apt-get and installing Git, Docker, Docker Compose, gcsfuse...' && \
   sudo apt-get update && \
-  sudo apt-get remove -y containerd docker.io runc docker-ce docker-ce-cli containerd.io && \
+  sudo apt-get remove -y containerd docker.io runc docker-ce docker-ce-cli containerd.io || true && \
   sudo apt-get install -y git gcsfuse docker-ce docker-ce-cli containerd.io docker-compose-plugin && \
 
   # Ensure docker-compose command is available (alias to plugin if needed)
-  if ! command -v docker-compose &> /dev/null; then sudo ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose; fi && \
+  if ! command -v docker-compose &> /dev/null; then sudo ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose || true; fi && \
 
   # Add the current user to the docker group
-  sudo usermod -aG docker \$(whoami) && \
+  sudo usermod -aG docker \$(whoami) || true && \
   
   # Mount the GCS bucket using gcsfuse
   echo '[INFO] Mounting GCS bucket gs://$BUCKET_NAME to /mnt/gcs_mount_point...' && \
   sudo mkdir -p /mnt/gcs_mount_point && \
-  sudo gcsfuse --implicit-dirs --uid=\$(id -u) --gid=\$(id -g) \"$BUCKET_NAME\" /mnt/gcs_mount_point && \
+  sudo gcsfuse --implicit-dirs --uid=\$(id -u) --gid=\$(id -g) \"$BUCKET_NAME\" /mnt/gcs_mount_point || true && \
   
   # Clone the GitHub repository
   echo '[INFO] Cloning repository $REPO_URL...' && \
@@ -108,8 +108,8 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   # Patch the notebook directly (bypassing Papermill tagging bugs)
   # We use symlinks to bypass the notebook's brittle filename parsing logic
   echo '[INFO] Creating symlinks to satisfy notebook filename parsing...' && \
-  ln -s \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \"GenCast 0p25deg Operational <2022.npz\" && \
-  ln -s \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" && \
+  ln -sf \"/mnt/gcs_mount_point/models/GenCast 0p25deg Operational <2022.npz\" \"GenCast 0p25deg Operational <2022.npz\" && \
+  ln -sf \"/mnt/gcs_mount_point/era5_input/source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" \"source-era5_date-${TARGET_DATE}_res-0.25_levels-13.nc\" && \
   
   echo '[INFO] Patching notebook logic and paths...' && \
   sed -i "s|MODEL_PATH = \\\"\\\"|MODEL_PATH = \\\"GenCast 0p25deg Operational <2022.npz\\\"|g" gencast_reference.ipynb && \
