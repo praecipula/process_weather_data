@@ -25,7 +25,7 @@ def patch_notebook(nb_path, target_date):
         'MODEL_PATH = ""': 'MODEL_PATH = "GenCast 0p25deg Operational <2022.npz"',
         'DATA_PATH = ""': f'DATA_PATH = "source-era5_date-{target_date}_res-0.25_levels-13.nc"',
         'STATS_DIR = ""': 'STATS_DIR = "/mnt/gcs_mount_point/stats/"',
-        'num_ensemble_members = 8': 'num_ensemble_members = 50'
+        'num_ensemble_members = 8': 'num_ensemble_members = 56'
     }
 
     # 2. Logic Bypasses (Bypass specific CALLS, not DEFINITIONS)
