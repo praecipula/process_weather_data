@@ -71,11 +71,17 @@ def patch_notebook(nb_path, target_date):
     
     print(f"  [OK] Cleared {plot_cells_cleared} visualization cells.")
 
-    # 3. Code Injection (Re-hydrate the raw integers back to time objects)
+    # 3. Code Injection (Re-hydrate and JAX compatibility)
     rehydration_code = [
-        "# RE-HYDRATION CELL (Injected by patcher)\n",
+        "# RE-HYDRATION AND COMPATIBILITY CELL (Injected by patcher)\n",
         "import numpy as np\n",
         "import xarray as xr\n",
+        "import jax\n",
+        "# Monkey-patch legacy JAX alias used by graphcast library\n",
+        "if not hasattr(jax, 'P'):\n",
+        "    jax.P = jax.sharding.PartitionSpec\n",
+        "    print('  [OK] jax.P monkey-patched.')\n",
+        "\n",
         "print('Re-hydrating integer coordinates back to time objects...')\n",
         "example_batch['time'] = example_batch['time'].astype('timedelta64[ns]')\n",
         "example_batch = example_batch.assign_coords(datetime=(('batch', 'time'), example_batch['datetime'].values.astype('datetime64[ns]')))\n",
