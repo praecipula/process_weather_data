@@ -71,6 +71,31 @@ def patch_notebook(nb_path, target_date):
     
     print(f"  [OK] Cleared {plot_cells_cleared} visualization cells.")
 
+    # 3. Code Injection (Re-hydrate the raw integers back to time objects)
+    rehydration_code = [
+        "# RE-HYDRATION CELL (Injected by patcher)\n",
+        "import numpy as np\n",
+        "import xarray as xr\n",
+        "print('Re-hydrating integer coordinates back to time objects...')\n",
+        "example_batch['time'] = example_batch['time'].astype('timedelta64[ns]')\n",
+        "example_batch = example_batch.assign_coords(datetime=(('batch', 'time'), example_batch['datetime'].values.astype('datetime64[ns]')))\n",
+        "print('  [OK] time and datetime re-hydrated.')\n"
+    ]
+
+    new_cells = []
+    for cell in nb['cells']:
+        new_cells.append(cell)
+        if cell['cell_type'] == 'code' and any('xarray.load_dataset(f)' in line for line in cell['source']):
+            print("  [OK] Injected re-hydration cell after data load.")
+            new_cells.append({
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": rehydration_code
+            })
+    nb['cells'] = new_cells
+
     with open(nb_path, 'w') as f:
         json.dump(nb, f, indent=1)
     

@@ -119,47 +119,39 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     # --- CRITICAL FIX 2: Correct Time/Datetime logic ---
     raw_time_dim = 'valid_time' if 'valid_time' in ds_merged.dims else 'time'
     
-    # 1. Extract raw timestamps and calculate relative offsets
+    # Extract raw timestamps and calculate relative offsets
     abs_datetimes = ds_merged[raw_time_dim].values
     offsets = abs_datetimes - np.datetime64(target_datetime)
     
-    # 2. Rename the main dimension to 'time' (if it wasn't already)
+    # Rename main dimension to 'time'
     if raw_time_dim != 'time':
         ds_merged = ds_merged.rename({raw_time_dim: 'time'})
     
-    # 3. Overwrite the 'time' dimension with the relative timedeltas
-    ds_merged['time'] = offsets
+    # OVERWRITE as raw integers to bypass xarray's automatic metadata injection
+    print("  -> Casting time coordinates to raw int64 nanoseconds...")
+    ds_merged['time'] = offsets.astype('int64')
     
     # --- CRITICAL FIX 3: Add the 'batch' dimension ---
     ds_merged = ds_merged.expand_dims('batch')
     ds_merged = ds_merged.assign_coords(batch=[0])
 
-    # --- CRITICAL FIX 4: Create 2D 'datetime' coordinate (batch, time) ---
-    # DeepMind requires datetime to be 2D for progress featurization
-    ds_merged = ds_merged.assign_coords(datetime=(('batch', 'time'), abs_datetimes[None, :]))
+    # Create 2D 'datetime' as raw integers
+    ds_merged = ds_merged.assign_coords(datetime=(('batch', 'time'), abs_datetimes.astype('datetime64[ns]').astype('int64')[None, :]))
 
-    # --- CRITICAL FIX 5: Strip conflicting metadata ---
-    # This prevents the 'failed to prevent overwriting existing key dtype' error
+    # --- CRITICAL FIX 4: Strip ALL metadata ---
     print(f"Sanitizing NetCDF metadata for variables: {list(ds_merged.variables)}")
     for var in ds_merged.variables:
-        # Clear ALL encoding and attributes for this variable
         ds_merged[var].encoding = {}
         ds_merged[var].attrs = {}
 
-    # Double-check 'time' specifically
-    ds_merged['time'].encoding = {}
-    ds_merged['time'].attrs = {}
-
     # Drop ERA5T 'expver' if it exists
     if 'expver' in ds_merged.coords:
-        print("Dropping 'expver' coordinate...")
         ds_merged = ds_merged.drop_vars('expver')
         
     # Ensure local file is overwritten
     if os.path.exists(output_path):
         os.remove(output_path)
         
-    # Write using the most basic NetCDF4 settings
     ds_merged.to_netcdf(output_path)
     print(f"Packaged file created and sanitized: {output_path}")
 
