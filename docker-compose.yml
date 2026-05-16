@@ -4,9 +4,12 @@ services:
   gencast-worker:
     build: . # Dockerfile will be in the same directory
     container_name: gencast_worker
+    privileged: true
+    network_mode: host
     volumes:
       - .:/app # Mount the Git repository into the container
       - /mnt/gcs_mount_point:/mnt/gcs_mount_point:rshared # Mount host's GCS Fuse mount point
+      - /lib/libtpu.so:/lib/libtpu.so # Mount the system TPU driver
     working_dir: /app
     command: ["/bin/bash", "-c", "echo 'GenCast prediction script will execute here.' && sleep infinity"]
     # Keep container alive for debugging if needed, 'command' will be overridden by 'docker-compose run'

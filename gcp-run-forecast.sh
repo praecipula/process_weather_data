@@ -114,6 +114,7 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   sudo docker-compose run --rm \
     -e JAX_PLATFORM_NAME=tpu \
     -e JAX_PLATFORM_MODE=tpu_driver \
+    -e JAX_PLATFORMS=tpu,cpu \
     gencast-worker \
     papermill gencast_reference.ipynb gencast_execution_log.ipynb && \
   
