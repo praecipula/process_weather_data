@@ -34,102 +34,90 @@ SURFACE_VARS = [
 ]
 
 def download_era5(client, target_datetime, output_dir):
-    """Downloads snapshots for T-6, T, and T+6 hours. Skips if files exist."""
-    atmos_file = os.path.join(output_dir, "atmos_raw.nc")
-    surface_file = os.path.join(output_dir, "surface_raw.nc")
+    """Downloads snapshots in separate streams for maximum reliability."""
+    files = {
+        "atmos": os.path.join(output_dir, "atmos_raw.nc"),
+        "surf_inst": os.path.join(output_dir, "surf_inst_raw.nc"),
+        "surf_msl": os.path.join(output_dir, "surf_msl_raw.nc"),
+        "surf_acc": os.path.join(output_dir, "surf_acc_raw.nc")
+    }
     
-    if os.path.exists(atmos_file) and os.path.exists(surface_file):
-        print(f"[CACHE] Found existing raw files in {output_dir}. Skipping download.")
-        return atmos_file, surface_file
+    if all(os.path.exists(f) for f in files.values()):
+        print(f"[CACHE] Found all {len(files)} raw files. Skipping download.")
+        return list(files.values())
 
     t0 = target_datetime
     t_minus_6 = t0 - datetime.timedelta(hours=6)
     t_plus_6 = t0 + datetime.timedelta(hours=6)
-    
     times = [t_minus_6, t0, t_plus_6]
     
-    # CDS API requires strings
     unique_years = sorted(list(set([str(t.year) for t in times])))
     unique_months = sorted(list(set([str(t.month) for t in times])))
     unique_days = sorted(list(set([str(t.day) for t in times])))
     time_strs = sorted(list(set([t.strftime('%H:%M') for t in times])))
     
-    print(f"Requesting snapshots for: Years {unique_years}, Months {unique_months}, Days {unique_days} at {time_strs}")
+    # 1. Atmospheric Pressure Levels
+    print("Requesting Atmospheric Levels...")
+    client.retrieve('reanalysis-era5-pressure-levels', {
+        'product_type': 'reanalysis', 'format': 'netcdf',
+        'variable': ATMOS_VARS, 'pressure_level': PRESSURE_LEVELS,
+        'year': unique_years, 'month': unique_months, 'day': unique_days, 'time': time_strs,
+    }, files["atmos"])
     
-    # 1. Download Pressure Level Data
-    client.retrieve(
-        'reanalysis-era5-pressure-levels',
-        {
-            'product_type': 'reanalysis',
-            'format': 'netcdf',
-            'variable': ATMOS_VARS,
-            'pressure_level': PRESSURE_LEVELS,
-            'year': unique_years,
-            'month': unique_months,
-            'day': unique_days,
-            'time': time_strs,
-        },
-        atmos_file
-    )
-    
-    # 2. Download Surface Data
-    client.retrieve(
-        'reanalysis-era5-single-levels',
-        {
-            'product_type': 'reanalysis',
-            'format': 'netcdf',
-            'variable': SURFACE_VARS,
-            'year': unique_years,
-            'month': unique_months,
-            'day': unique_days,
-            'time': time_strs,
-        },
-        surface_file
-    )
-    
-    return atmos_file, surface_file
+    # 2. Surface Instantaneous (T2M, SP, Wind)
+    print("Requesting Surface Instantaneous (T2M, SP, Wind)...")
+    client.retrieve('reanalysis-era5-single-levels', {
+        'product_type': 'reanalysis', 'format': 'netcdf',
+        'variable': ['2m_temperature', 'surface_pressure', '10m_u_component_of_wind', '10m_v_component_of_wind'],
+        'year': unique_years, 'month': unique_months, 'day': unique_days, 'time': time_strs,
+    }, files["surf_inst"])
 
-def package_data(atmos_path, surface_path, output_path, target_datetime):
-    """Merges and renames dimensions/variables to match DeepMind requirements."""
-    print("Packaging and normalizing datasets...")
-    ds_atmos = xr.open_dataset(atmos_path)
-    ds_surface = xr.open_dataset(surface_path)
+    # 3. Mean Sea Level Pressure (Often needs its own call in Beta)
+    print("Requesting Mean Sea Level Pressure...")
+    client.retrieve('reanalysis-era5-single-levels', {
+        'product_type': 'reanalysis', 'format': 'netcdf',
+        'variable': ['mean_sea_level_pressure'],
+        'year': unique_years, 'month': unique_months, 'day': unique_days, 'time': time_strs,
+    }, files["surf_msl"])
+
+    # 4. Total Precipitation (Accumulated)
+    print("Requesting Total Precipitation...")
+    client.retrieve('reanalysis-era5-single-levels', {
+        'product_type': 'reanalysis', 'format': 'netcdf',
+        'variable': ['total_precipitation'],
+        'year': unique_years, 'month': unique_months, 'day': unique_days, 'time': time_strs,
+    }, files["surf_acc"])
     
-    # Merge them into one dataset
-    ds_merged = xr.merge([ds_atmos, ds_surface])
+    return list(files.values())
+
+def package_data(file_paths, output_path, target_datetime):
+    """Merges all raw streams and renames to match DeepMind requirements."""
+    print("Packaging and normalizing datasets...")
+    datasets = [xr.open_dataset(p) for p in file_paths]
+    
+    # Merge all streams into one dataset
+    ds_merged = xr.merge(datasets, compat='override')
     
     # --- CRITICAL FIX 1: Rename dimensions and variables ---
     rename_map = {
-        'latitude': 'lat',
-        'longitude': 'lon',
-        'pressure_level': 'level',
-        'z': 'geopotential',
-        't': 'temperature',
-        'q': 'specific_humidity',
-        'u': 'u_component_of_wind',
-        'v': 'v_component_of_wind',
-        't2m': '2m_temperature',
-        'sp': 'surface_pressure',
-        'msl': 'mean_sea_level_pressure',
-        'tp': 'total_precipitation',
-        'u10': '10m_u_component_of_wind',
-        'v10': '10m_v_component_of_wind'
+        'latitude': 'lat', 'longitude': 'lon', 'pressure_level': 'level',
+        'z': 'geopotential', 't': 'temperature', 'q': 'specific_humidity',
+        'u': 'u_component_of_wind', 'v': 'v_component_of_wind',
+        't2m': '2m_temperature', 'sp': 'surface_pressure',
+        'msl': 'mean_sea_level_pressure', 'tp': 'total_precipitation',
+        'u10': '10m_u_component_of_wind', 'v10': '10m_v_component_of_wind'
     }
     actual_rename = {k: v for k, v in rename_map.items() if k in ds_merged.coords or k in ds_merged.data_vars}
     ds_merged = ds_merged.rename(actual_rename)
 
     # --- CRITICAL FIX 2: Correct Time/Datetime logic ---
     raw_time_dim = 'valid_time' if 'valid_time' in ds_merged.dims else 'time'
-    
-    # Extract raw timestamps and calculate relative offsets
     abs_datetimes = ds_merged[raw_time_dim].values
     offsets = abs_datetimes - np.datetime64(target_datetime)
     
-    # Rename main dimension to 'time'
     if raw_time_dim != 'time':
         ds_merged = ds_merged.rename({raw_time_dim: 'time'})
     
-    # OVERWRITE as raw integers to bypass xarray's automatic metadata injection
     print("  -> Casting time coordinates to raw int64 nanoseconds...")
     ds_merged['time'] = offsets.astype('int64')
     
@@ -150,7 +138,6 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     if 'expver' in ds_merged.coords:
         ds_merged = ds_merged.drop_vars('expver')
         
-    # Ensure local file is overwritten
     if os.path.exists(output_path):
         os.remove(output_path)
         
