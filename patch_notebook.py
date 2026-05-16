@@ -30,17 +30,21 @@ def patch_notebook(nb_path, target_date):
 
     # 2. Logic Bypasses (Bypass specific CALLS, not DEFINITIONS)
     bypasses = [
-        'assert data_valid_for_model',
-        'plot_data(data',
-        'display.display(plot_data',
-        'display.display(animation',
-        'animation.FuncAnimation'
+        'assert data_valid_for_model'
     ]
 
     found_flags = {k: False for k in list(replacements.keys()) + bypasses}
+    plot_cells_cleared = 0
 
     for cell in nb['cells']:
         if cell['cell_type'] == 'code':
+            
+            # Check if this is a plotting cell to be completely bypassed
+            if len(cell['source']) > 0 and '# @title Plot' in cell['source'][0]:
+                cell['source'] = ["# Plotting cell bypassed for headless execution\n"]
+                plot_cells_cleared += 1
+                continue
+                
             new_source = []
             for line in cell['source']:
                 modified_line = line
@@ -64,6 +68,8 @@ def patch_notebook(nb_path, target_date):
     for target, found in found_flags.items():
         status = "[OK]" if found else "[WARN]"
         print(f"  {status} Found/Patched: {target}")
+    
+    print(f"  [OK] Cleared {plot_cells_cleared} visualization cells.")
 
     with open(nb_path, 'w') as f:
         json.dump(nb, f, indent=1)
