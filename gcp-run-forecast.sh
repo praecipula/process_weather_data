@@ -67,6 +67,16 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
   sudo systemctl stop unattended-upgrades >/dev/null 2>&1 || true && \
   until sudo apt-get update >/dev/null 2>&1; do echo '  ...waiting for apt lock...'; sleep 10; done && \
   
+  # Add Repositories (GCS FUSE and Docker)
+  echo '[INFO] Adding external repositories...' && \
+  export GCSFUSE_REPO=gcsfuse-\$(lsb_release -c -s) && \
+  echo \"deb https://packages.cloud.google.com/apt \$GCSFUSE_REPO main\" | sudo tee /etc/apt/sources.list.d/gcsfuse.list >/dev/null && \
+  curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - >/dev/null 2>&1 || true && \
+  sudo mkdir -p /etc/apt/keyrings && \
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes >/dev/null 2>&1 && \
+  echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null && \
+  sudo apt-get update >/dev/null 2>&1 && \
+  
   # Install necessary tools (cleanup old docker first)
   sudo apt-get remove -y containerd docker.io runc docker-ce docker-ce-cli containerd.io >/dev/null 2>&1 || true && \
   sudo apt-get install -y git gcsfuse docker-ce docker-ce-cli containerd.io docker-compose-plugin && \
