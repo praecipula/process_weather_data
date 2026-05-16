@@ -28,11 +28,12 @@ def patch_notebook(nb_path, target_date):
         'num_ensemble_members = 8': 'num_ensemble_members = 50'
     }
 
-    # 2. Logic Bypasses (Bypass by commenting out)
+    # 2. Logic Bypasses (Bypass specific CALLS, not DEFINITIONS)
     bypasses = [
         'assert data_valid_for_model',
-        'plot_data(',
-        'display.display(',
+        'plot_data(data',
+        'display.display(plot_data',
+        'display.display(animation',
         'animation.FuncAnimation'
     ]
 
@@ -50,9 +51,9 @@ def patch_notebook(nb_path, target_date):
                         modified_line = line.replace(target, replacement)
                         found_flags[target] = True
                 
-                # Apply bypasses (prefix with #)
+                # Apply bypasses (prefix with #, only if it's a call/assertion)
                 for target in bypasses:
-                    if target in line:
+                    if target in line and 'def ' not in line:
                         modified_line = f"# {modified_line}"
                         found_flags[target] = True
                         
