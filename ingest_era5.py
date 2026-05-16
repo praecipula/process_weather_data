@@ -29,8 +29,8 @@ ATMOS_VARS = [
 ]
 
 SURFACE_VARS = [
-    '2m_temperature', 'surface_pressure', 
-    '10m_u_component_of_wind', '10m_v_component_of_wind'
+    '2m_temperature', 'surface_pressure', 'mean_sea_level_pressure',
+    'total_precipitation', '10m_u_component_of_wind', '10m_v_component_of_wind'
 ]
 
 def download_era5(client, target_datetime, output_dir):
@@ -110,6 +110,8 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
         'v': 'v_component_of_wind',
         't2m': '2m_temperature',
         'sp': 'surface_pressure',
+        'msl': 'mean_sea_level_pressure',
+        'tp': 'total_precipitation',
         'u10': '10m_u_component_of_wind',
         'v10': '10m_v_component_of_wind'
     }
