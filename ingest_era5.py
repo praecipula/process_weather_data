@@ -119,26 +119,26 @@ def package_data(atmos_path, surface_path, output_path, target_datetime):
     # --- CRITICAL FIX 2: Correct Time/Datetime logic ---
     raw_time_dim = 'valid_time' if 'valid_time' in ds_merged.dims else 'time'
     
-    # 1. First, preserve the absolute timestamps as 'datetime'
-    ds_merged = ds_merged.assign_coords(datetime=ds_merged[raw_time_dim])
+    # 1. Extract raw timestamps and calculate relative offsets
+    abs_datetimes = ds_merged[raw_time_dim].values
+    offsets = abs_datetimes - np.datetime64(target_datetime)
     
-    # 2. Calculate relative offsets
-    offsets = ds_merged[raw_time_dim].values - np.datetime64(target_datetime)
-    
-    # 3. Rename the main dimension to 'time' (if it wasn't already)
+    # 2. Rename the main dimension to 'time' (if it wasn't already)
     if raw_time_dim != 'time':
         ds_merged = ds_merged.rename({raw_time_dim: 'time'})
     
-    # 4. OVERWRITE 'time' as raw integers (nanoseconds)
-    # This prevents xarray from trying to "decode" it on the other end
-    print("  -> Converting 'time' to raw int64 nanoseconds...")
-    ds_merged['time'] = offsets.astype('int64')
+    # 3. Overwrite the 'time' dimension with the relative timedeltas
+    ds_merged['time'] = offsets
     
     # --- CRITICAL FIX 3: Add the 'batch' dimension ---
     ds_merged = ds_merged.expand_dims('batch')
     ds_merged = ds_merged.assign_coords(batch=[0])
 
-    # --- CRITICAL FIX 4: Strip conflicting metadata ---
+    # --- CRITICAL FIX 4: Create 2D 'datetime' coordinate (batch, time) ---
+    # DeepMind requires datetime to be 2D for progress featurization
+    ds_merged = ds_merged.assign_coords(datetime=(('batch', 'time'), abs_datetimes[None, :]))
+
+    # --- CRITICAL FIX 5: Strip conflicting metadata ---
     # This prevents the 'failed to prevent overwriting existing key dtype' error
     print(f"Sanitizing NetCDF metadata for variables: {list(ds_merged.variables)}")
     for var in ds_merged.variables:
