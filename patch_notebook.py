@@ -52,23 +52,24 @@ def patch_notebook(nb_path, target_date):
                 # Apply replacements
                 for target, replacement in replacements.items():
                     if target in line:
-                        modified_line = line.replace(target, replacement)
+                        modified_line = modified_line.replace(target, replacement)
                         found_flags[target] = True
                 
-            # 2. Apply bypasses (prefix with #, only if it's a call/assertion)
-            for target in bypasses:
-                if target in line and 'def ' not in line:
-                    modified_line = f"# {modified_line}"
-                    found_flags[target] = True
-            
-            # 3. Apply Topology Filtering (Drop linear progress features)
-            if 'data_utils.add_derived_vars(example_batch)' in line:
-                indent = line[:len(line) - len(line.lstrip())]
-                modified_line = line + f"{indent}example_batch = example_batch.drop_vars(['day_progress', 'year_progress'], errors='ignore')\n"
-                print("  [OK] Injected topology filter (dropped linear progress).")
+                # Apply bypasses (prefix with #, only if it's a call/assertion)
+                for target in bypasses:
+                    if target in line and 'def ' not in line:
+                        modified_line = f"# {modified_line}"
+                        found_flags[target] = True
+                
+                # Apply Topology Filtering (Drop linear progress features)
+                if 'data_utils.add_derived_vars(example_batch)' in line:
+                    indent = line[:len(line) - len(line.lstrip())]
+                    modified_line = line + f"{indent}example_batch = example_batch.drop_vars(['day_progress', 'year_progress'], errors='ignore')\n"
+                    print("  [OK] Injected topology filter (dropped linear progress).")
 
-            new_source.append(modified_line)
-        cell['source'] = new_source
+                new_source.append(modified_line)
+            
+            cell['source'] = new_source
 
     print("Patching results:")
     for target, found in found_flags.items():
@@ -89,9 +90,10 @@ def patch_notebook(nb_path, target_date):
         "    print('  [OK] jax.P monkey-patched.')\n",
         "\n",
         "print('Re-hydrating integer coordinates back to time objects...')\n",
-        "example_batch['time'] = example_batch['time'].astype('timedelta64[ns]')\n",
-        "example_batch = example_batch.assign_coords(datetime=(('batch', 'time'), example_batch['datetime'].values.astype('datetime64[ns]')))\n",
-        "print('  [OK] time and datetime re-hydrated.')\n"
+        "if 'example_batch' in locals():\n",
+        "    example_batch['time'] = example_batch['time'].astype('timedelta64[ns]')\n",
+        "    example_batch = example_batch.assign_coords(datetime=(('batch', 'time'), example_batch['datetime'].values.astype('datetime64[ns]')))\n",
+        "    print('  [OK] time and datetime re-hydrated.')\n"
     ]
 
     new_cells = []
