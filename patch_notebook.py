@@ -55,14 +55,20 @@ def patch_notebook(nb_path, target_date):
                         modified_line = line.replace(target, replacement)
                         found_flags[target] = True
                 
-                # Apply bypasses (prefix with #, only if it's a call/assertion)
-                for target in bypasses:
-                    if target in line and 'def ' not in line:
-                        modified_line = f"# {modified_line}"
-                        found_flags[target] = True
-                        
-                new_source.append(modified_line)
-            cell['source'] = new_source
+            # 2. Apply bypasses (prefix with #, only if it's a call/assertion)
+            for target in bypasses:
+                if target in line and 'def ' not in line:
+                    modified_line = f"# {modified_line}"
+                    found_flags[target] = True
+            
+            # 3. Apply Topology Filtering (Drop linear progress features)
+            if 'data_utils.add_derived_vars(example_batch)' in line:
+                indent = line[:len(line) - len(line.lstrip())]
+                modified_line = line + f"{indent}example_batch = example_batch.drop_vars(['day_progress', 'year_progress'], errors='ignore')\n"
+                print("  [OK] Injected topology filter (dropped linear progress).")
+
+            new_source.append(modified_line)
+        cell['source'] = new_source
 
     print("Patching results:")
     for target, found in found_flags.items():

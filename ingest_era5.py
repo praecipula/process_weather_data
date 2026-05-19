@@ -5,7 +5,7 @@ Fetches the required atmospheric and surface snapshots from ERA5
 via the Copernicus CDS API and uploads them to GCS for GenCast.
 
 Requirements:
-- pip install cdsapi google-cloud-storage xarray netcdf4 h5netcdf
+- pip install cdsapi google-cloud-storage xarray netcdf4 h5netcdf rich
 - ~/.cdsapirc file with valid credentials
 """
 
@@ -16,32 +16,35 @@ import cdsapi
 import numpy as np
 import xarray as xr
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
+from rich.progress import Progress, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn, TimeElapsedColumn
 
-# GenCast Requirements
+# GenCast Requirements: 13 pressure levels
 PRESSURE_LEVELS = [
     '50', '100', '150', '200', '250', '300', 
     '400', '500', '600', '700', '850', '925', '1000'
 ]
 
+# Atmos: 6 variables (Base 5 + Vertical Velocity)
 ATMOS_VARS = [
     'temperature', 'specific_humidity', 'geopotential',
     'u_component_of_wind', 'v_component_of_wind', 'vertical_velocity'
 ]
 
+# Surface: 7 variables (Base 5 + SST + Precipitation)
 SURFACE_INST_VARS = [
     '2m_temperature', 'surface_pressure', '10m_u_component_of_wind', 
     '10m_v_component_of_wind', 'sea_surface_temperature'
 ]
 
-# These often need their own requests in the new CDS-Beta
 SURFACE_MSL_VAR = ['mean_sea_level_pressure']
-SURFACE_ACC_VAR = ['total_precipitation']
+SURFACE_ACC_VAR = ['total_precipitation'] # GenCast target
 
-# Invariant/Static fields (Orography)
+# Invariant/Static fields
 STATIC_VARS = ['geopotential', 'land_sea_mask']
 
 def download_era5(client, target_datetime, output_dir):
-    """Downloads snapshots in separate streams for maximum reliability."""
+    """Downloads snapshots in 12-hour steps (T, T-12, T-24)."""
     files = {
         "atmos": os.path.join(output_dir, "atmos_raw.nc"),
         "surf_inst": os.path.join(output_dir, "surf_inst_raw.nc"),
@@ -51,21 +54,22 @@ def download_era5(client, target_datetime, output_dir):
     }
     
     if all(os.path.exists(f) for f in files.values()):
-        print(f"[CACHE] Found all {len(files)} raw files. Skipping download.")
+        print(f"[CACHE] Found raw files in {output_dir}. skipping download.")
         return files
 
     t0 = target_datetime
-    t_minus_6 = t0 - datetime.timedelta(hours=6)
-    t_plus_6 = t0 + datetime.timedelta(hours=6)
-    times = [t_minus_6, t0, t_plus_6]
+    t_minus_12 = t0 - datetime.timedelta(hours=12)
+    t_minus_24 = t0 - datetime.timedelta(hours=24)
+    times = [t_minus_24, t_minus_12, t0]
     
     unique_years = sorted(list(set([str(t.year) for t in times])))
     unique_months = sorted(list(set([str(t.month) for t in times])))
     unique_days = sorted(list(set([str(t.day) for t in times])))
     time_strs = sorted(list(set([t.strftime('%H:%M') for t in times])))
     
+    print(f"Requesting snapshots for: {unique_years}/{unique_months}/{unique_days} at {time_strs}")
+    
     # 1. Atmospheric Pressure Levels
-    print("Requesting Atmospheric Levels...")
     client.retrieve('reanalysis-era5-pressure-levels', {
         'product_type': 'reanalysis', 'format': 'netcdf',
         'variable': ATMOS_VARS, 'pressure_level': PRESSURE_LEVELS,
@@ -73,7 +77,6 @@ def download_era5(client, target_datetime, output_dir):
     }, files["atmos"])
     
     # 2. Surface Instantaneous
-    print("Requesting Surface Instantaneous...")
     client.retrieve('reanalysis-era5-single-levels', {
         'product_type': 'reanalysis', 'format': 'netcdf',
         'variable': SURFACE_INST_VARS,
@@ -81,15 +84,13 @@ def download_era5(client, target_datetime, output_dir):
     }, files["surf_inst"])
 
     # 3. Mean Sea Level Pressure
-    print("Requesting Mean Sea Level Pressure...")
     client.retrieve('reanalysis-era5-single-levels', {
         'product_type': 'reanalysis', 'format': 'netcdf',
         'variable': SURFACE_MSL_VAR,
         'year': unique_years, 'month': unique_months, 'day': unique_days, 'time': time_strs,
     }, files["surf_msl"])
 
-    # 4. Total Precipitation
-    print("Requesting Total Precipitation...")
+    # 4. Total Precipitation (The missing Key!)
     client.retrieve('reanalysis-era5-single-levels', {
         'product_type': 'reanalysis', 'format': 'netcdf',
         'variable': SURFACE_ACC_VAR,
@@ -97,7 +98,6 @@ def download_era5(client, target_datetime, output_dir):
     }, files["surf_acc"])
 
     # 5. Static Invariants
-    print("Requesting Static Invariants (Orography)...")
     client.retrieve('reanalysis-era5-single-levels', {
         'product_type': 'reanalysis', 'format': 'netcdf',
         'variable': STATIC_VARS,
@@ -107,38 +107,31 @@ def download_era5(client, target_datetime, output_dir):
     return files
 
 def package_data(files, output_path, target_datetime):
-    """Merges all raw streams and renames to match DeepMind requirements."""
+    """Merges streams and renames for GenCast 12h resolution."""
     print("Packaging and normalizing datasets...")
     
-    # Load and clean each stream
     ds_atmos = xr.open_dataset(files["atmos"])
     ds_surf_inst = xr.open_dataset(files["surf_inst"])
     ds_surf_msl = xr.open_dataset(files["surf_msl"])
     ds_surf_acc = xr.open_dataset(files["surf_acc"])
     ds_static = xr.open_dataset(files["static"])
 
-    # --- CRITICAL FIX: Handle 'geopotential' naming collision ---
-    # Static geopotential must be renamed to 'geopotential_at_surface' BEFORE merge
-    # so it doesn't collide with the 13 levels of atmospheric 'geopotential'.
     static_rename = {}
     if 'z' in ds_static.data_vars: static_rename['z'] = 'geopotential_at_surface'
     if 'lsm' in ds_static.data_vars: static_rename['lsm'] = 'land_sea_mask'
     ds_static = ds_static.rename(static_rename)
     
-    # Broadcast static invariants across the time dimension
-    # (DeepMind expects these to be present at every time step)
-    ds_static = ds_static.broadcast_like(ds_atmos[['time']] if 'time' in ds_atmos.dims else ds_atmos[['valid_time']])
+    time_coord = 'valid_time' if 'valid_time' in ds_atmos.dims else 'time'
+    ds_static = ds_static.broadcast_like(ds_atmos[[time_coord]])
 
     datasets = [ds_atmos, ds_surf_inst, ds_surf_msl, ds_surf_acc, ds_static]
-    cleaned_datasets = []
+    cleaned = []
     for ds in datasets:
         if 'expver' in ds.coords: ds = ds.drop_vars('expver')
-        cleaned_datasets.append(ds)
+        cleaned.append(ds)
 
-    # Merge all streams
-    ds_merged = xr.merge(cleaned_datasets, compat='override')
+    ds_merged = xr.merge(cleaned, compat='override')
     
-    # --- CRITICAL FIX 1: Rename dimensions and variables ---
     rename_map = {
         'latitude': 'lat', 'longitude': 'lon', 'pressure_level': 'level',
         'z': 'geopotential', 't': 'temperature', 'q': 'specific_humidity',
@@ -151,7 +144,9 @@ def package_data(files, output_path, target_datetime):
     actual_rename = {k: v for k, v in rename_map.items() if k in ds_merged.coords or k in ds_merged.data_vars}
     ds_merged = ds_merged.rename(actual_rename)
 
-    # --- CRITICAL FIX 2: Correct Time/Datetime logic ---
+    print("  -> Sorting lat/lon coordinates ascending...")
+    ds_merged = ds_merged.sortby(['lat', 'lon'])
+
     raw_time_dim = 'valid_time' if 'valid_time' in ds_merged.dims else 'time'
     abs_datetimes = ds_merged[raw_time_dim].values
     offsets = abs_datetimes - np.datetime64(target_datetime)
@@ -166,8 +161,7 @@ def package_data(files, output_path, target_datetime):
     ds_merged = ds_merged.assign_coords(batch=[0])
     ds_merged = ds_merged.assign_coords(datetime=(('batch', 'time'), abs_datetimes.astype('datetime64[ns]').astype('int64')[None, :]))
 
-    # --- CRITICAL FIX 4: Strip ALL metadata ---
-    print(f"Sanitizing NetCDF metadata for variables: {list(ds_merged.variables)}")
+    print(f"Sanitizing metadata for variables: {list(ds_merged.variables)}")
     for var in ds_merged.variables:
         ds_merged[var].encoding = {}
         ds_merged[var].attrs = {}
@@ -179,13 +173,35 @@ def package_data(files, output_path, target_datetime):
     print(f"Packaged file created and sanitized: {output_path}")
 
 def upload_to_gcs(local_path, bucket_name, gcs_path):
-    """Uploads the file to Google Cloud Storage."""
-    print(f"Uploading to gs://{bucket_name}/{gcs_path}...")
+    """Uploads the file to Google Cloud Storage with a rich progress bar."""
+    print(f"\nPreparing to upload {local_path} to gs://{bucket_name}/{gcs_path}")
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(gcs_path)
-    blob.upload_from_filename(local_path)
-    print("Upload complete.")
+    blob.chunk_size = 10 * 1024 * 1024
+    file_size = os.path.getsize(local_path)
+    modified_retry = DEFAULT_RETRY.with_timeout(600.0)
+    
+    with Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=None),
+        "[progress.percentage]{task.percentage:>3.1f}%",
+        "•",
+        DownloadColumn(),
+        "•",
+        TransferSpeedColumn(),
+        "•",
+        TextColumn("[cyan]Elapsed:"),
+        TimeElapsedColumn(),
+        TextColumn("[cyan]ETA:"),
+        TimeRemainingColumn(),
+    ) as progress:
+        task = progress.add_task("Uploading (600s Timeout)", total=file_size)
+        with open(local_path, "rb") as f:
+            wrapped_file = progress.wrap_file(f, task_id=task)
+            blob.upload_from_file(wrapped_file, retry=modified_retry)
+
+    print("Upload complete!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ingest ERA5 data for GenCast.")
@@ -195,7 +211,6 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     target_dt = datetime.datetime.strptime(f"{args.date} {args.time}", "%Y-%m-%d %H:%M")
-    
     tmp_dir = "tmp_ingest"
     os.makedirs(tmp_dir, exist_ok=True)
     
@@ -214,7 +229,6 @@ if __name__ == "__main__":
         final_nc = os.path.join(tmp_dir, filename)
         package_data(files, final_nc, target_dt)
         upload_to_gcs(final_nc, args.bucket, f"era5_input/{filename}")
-        upload_to_gcs(final_nc, args.bucket, "era5_input/input_batch.nc")
         
     except Exception as e:
         print(f"Error during ingestion: {e}")
