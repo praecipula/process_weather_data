@@ -37,8 +37,8 @@ def patch_notebook(nb_path, target_date):
     plot_cells_cleared = 0
 
     # 3. Injection Code Blocks
-    rehydration_code = [
-        "# RE-HYDRATION AND COMPATIBILITY CELL (Injected by patcher)\n",
+    init_code = [
+        "# GLOBAL DIAGNOSTICS AND COMPATIBILITY (Injected by patcher)\n",
         "import numpy as np\n",
         "import xarray as xr\n",
         "import jax\n",
@@ -52,8 +52,11 @@ def patch_notebook(nb_path, target_date):
         "\n",
         "if not hasattr(jax, 'P'):\n",
         "    jax.P = jax.sharding.PartitionSpec\n",
-        "    log_diag('jax.P monkey-patched.')\n",
-        "\n",
+        "    log_diag('jax.P monkey-patched.')\n"
+    ]
+
+    rehydration_code = [
+        "# RE-HYDRATION CELL (Injected by patcher)\n",
         "print('Re-hydrating integer coordinates...')\n",
         "if 'example_batch' in locals():\n",
         "    log_diag(f'Initial batch vars: {list(example_batch.data_vars)}')\n",
@@ -78,8 +81,21 @@ def patch_notebook(nb_path, target_date):
     ]
 
     new_cells = []
+    first_import_found = False
     for cell in nb['cells']:
         if cell['cell_type'] == 'code':
+            
+            # --- Inject Global Init after first import cell ---
+            if not first_import_found and any('import ' in line for line in cell['source']):
+                new_cells.append(cell)
+                print("  [OK] Injected Global Diagnostics Init.")
+                new_cells.append({
+                    "cell_type": "code", "execution_count": None, "metadata": {},
+                    "outputs": [], "source": init_code
+                })
+                first_import_found = True
+                continue
+
             # Check for visualization cells
             if len(cell['source']) > 0 and '# @title Plot' in cell['source'][0]:
                 cell['source'] = ["# Plotting cell bypassed for headless execution\n"]
