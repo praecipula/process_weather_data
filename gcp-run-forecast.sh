@@ -116,16 +116,12 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     -e JAX_PLATFORM_MODE=tpu_driver \
     -e JAX_PLATFORMS=tpu,cpu \
     gencast-worker \
-    papermill gencast_reference.ipynb gencast_execution_log.ipynb && \
+    papermill gencast_reference.ipynb gencast_execution_log.ipynb
   
-  echo '--- VM Setup End ---' && \
-  echo '[INFO] GenCast execution complete. Syncing diagnostics to GCS...' && \
-  gsutil cp gencast_diagnostics.txt gs://$BUCKET_NAME/logs/diagnostics_${TARGET_DATE}_$(date +%s).txt || true && \
-  sudo poweroff" || {
-    echo '[ERROR] Run failed. Attempting to salvage diagnostics...'
-    gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command="gsutil cp /app/gencast_diagnostics.txt gs://$BUCKET_NAME/logs/failed_diagnostics_${TARGET_DATE}_$(date +%s).txt"
-    log_error "SSH command execution or GenCast run failed."
-  }
+  echo '--- VM Setup End ---'
+  echo '[INFO] Syncing diagnostics to GCS...'
+  gsutil cp gencast_diagnostics.txt gs://$BUCKET_NAME/logs/run_${TARGET_DATE}_$(date +%s).txt || true
+  sudo poweroff" || log_error "SSH command execution failed (likely preemption)."
 
 log_info "GenCast Prediction Workflow finished."
 log_info "Check GCS bucket gs://$BUCKET_NAME for results."
