@@ -105,8 +105,24 @@ def patch_notebook(nb_path, target_date):
         "    log_diag('time and datetime re-hydrated.')\n"
     ]
 
-    new_cells = []
-    for cell in nb['cells']:
+        # Inject after model load to fix task_config
+        if cell['cell_type'] == 'code' and any('ckpt = checkpoint.load(f' in line for line in cell['source']):
+            print("  [OK] Injected task_config topology fix.")
+            new_cells.append({
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# TOPOLOGY FIX (Injected by patcher)\n",
+                    "log_diag(f'Original Forcings: {task_config.forcing_variables}')\n",
+                    "task_config.input_variables = tuple(v for v in task_config.input_variables if v not in ['day_progress', 'year_progress'])\n",
+                    "task_config.forcing_variables = tuple(v for v in task_config.forcing_variables if v not in ['day_progress', 'year_progress'])\n",
+                    "log_diag(f'Pruned Forcings: {task_config.forcing_variables}')\n",
+                    "log_diag(f'Inputs count: {len(task_config.input_variables)}')\n"
+                ]
+            })
+            
         new_cells.append(cell)
         
         # Inject after data load
