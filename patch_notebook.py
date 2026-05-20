@@ -78,35 +78,63 @@ def patch_notebook(nb_path, target_date):
     
     print(f"  [OK] Cleared {plot_cells_cleared} visualization cells.")
 
-    # 3. Code Injection (Re-hydrate and JAX compatibility)
+    # 3. Code Injection (Diagnostic Flight Recorder & JAX compatibility)
     rehydration_code = [
-        "# RE-HYDRATION AND COMPATIBILITY CELL (Injected by patcher)\n",
+        "# DIAGNOSTIC AND COMPATIBILITY CELL (Injected by patcher)\n",
         "import numpy as np\n",
         "import xarray as xr\n",
         "import jax\n",
-        "# Monkey-patch legacy JAX alias used by graphcast library\n",
+        "import os\n",
+        "\n",
+        "def log_diag(msg):\n",
+        "    with open('gencast_diagnostics.txt', 'a') as f: f.write(f'{msg}\\n')\n",
+        "    print(f'[DIAG] {msg}')\n",
+        "\n",
+        "log_diag('--- Session Started ---')\n",
+        "\n",
+        "# Monkey-patch legacy JAX alias\n",
         "if not hasattr(jax, 'P'):\n",
         "    jax.P = jax.sharding.PartitionSpec\n",
-        "    print('  [OK] jax.P monkey-patched.')\n",
+        "    log_diag('jax.P monkey-patched.')\n",
         "\n",
-        "print('Re-hydrating integer coordinates back to time objects...')\n",
+        "print('Re-hydrating integer coordinates...')\n",
         "if 'example_batch' in locals():\n",
+        "    log_diag(f'Initial batch vars: {list(example_batch.data_vars)}')\n",
         "    example_batch['time'] = example_batch['time'].astype('timedelta64[ns]')\n",
         "    example_batch = example_batch.assign_coords(datetime=(('batch', 'time'), example_batch['datetime'].values.astype('datetime64[ns]')))\n",
-        "    print('  [OK] time and datetime re-hydrated.')\n"
+        "    log_diag('time and datetime re-hydrated.')\n"
     ]
 
     new_cells = []
     for cell in nb['cells']:
         new_cells.append(cell)
+        
+        # Inject after data load
         if cell['cell_type'] == 'code' and any('xarray.load_dataset(f)' in line for line in cell['source']):
-            print("  [OK] Injected re-hydration cell after data load.")
+            print("  [OK] Injected diagnostic re-hydration cell.")
             new_cells.append({
                 "cell_type": "code",
                 "execution_count": None,
                 "metadata": {},
                 "outputs": [],
                 "source": rehydration_code
+            })
+            
+        # Inject after feature extraction
+        if cell['cell_type'] == 'code' and any('extract_inputs_targets_forcings' in line for line in cell['source']):
+            print("  [OK] Injected post-extraction diagnostics.")
+            new_cells.append({
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "log_diag(f'Task Config Inputs: {task_config.input_variables}')\n",
+                    "log_diag(f'Task Config Targets: {task_config.target_variables}')\n",
+                    "log_diag(f'Task Config Forcings: {task_config.forcing_variables}')\n",
+                    "log_diag(f'Eval Input Vars: {list(eval_inputs.data_vars)}')\n",
+                    "log_diag(f'Eval Forcing Vars: {list(eval_forcings.data_vars)}')\n"
+                ]
             })
     nb['cells'] = new_cells
 

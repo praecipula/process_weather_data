@@ -119,7 +119,13 @@ gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command
     papermill gencast_reference.ipynb gencast_execution_log.ipynb && \
   
   echo '--- VM Setup End ---' && \
-  sudo poweroff" || log_error "SSH command execution or GenCast run failed."
+  echo '[INFO] GenCast execution complete. Syncing diagnostics to GCS...' && \
+  gsutil cp gencast_diagnostics.txt gs://$BUCKET_NAME/logs/diagnostics_${TARGET_DATE}_$(date +%s).txt || true && \
+  sudo poweroff" || {
+    echo '[ERROR] Run failed. Attempting to salvage diagnostics...'
+    gcloud compute tpus tpu-vm ssh "$TPU_NAME" --zone="$ZONE" --worker=all --command="gsutil cp /app/gencast_diagnostics.txt gs://$BUCKET_NAME/logs/failed_diagnostics_${TARGET_DATE}_$(date +%s).txt"
+    log_error "SSH command execution or GenCast run failed."
+  }
 
 log_info "GenCast Prediction Workflow finished."
 log_info "Check GCS bucket gs://$BUCKET_NAME for results."
