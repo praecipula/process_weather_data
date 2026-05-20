@@ -36,51 +36,9 @@ def patch_notebook(nb_path, target_date):
     found_flags = {k: False for k in list(replacements.keys()) + bypasses}
     plot_cells_cleared = 0
 
-    for cell in nb['cells']:
-        if cell['cell_type'] == 'code':
-            
-            # Check if this is a plotting cell to be completely bypassed
-            if len(cell['source']) > 0 and '# @title Plot' in cell['source'][0]:
-                cell['source'] = ["# Plotting cell bypassed for headless execution\n"]
-                plot_cells_cleared += 1
-                continue
-                
-            new_source = []
-            for line in cell['source']:
-                modified_line = line
-                
-                # Apply replacements
-                for target, replacement in replacements.items():
-                    if target in line:
-                        modified_line = modified_line.replace(target, replacement)
-                        found_flags[target] = True
-                
-                # Apply bypasses (prefix with #, only if it's a call/assertion)
-                for target in bypasses:
-                    if target in line and 'def ' not in line:
-                        modified_line = f"# {modified_line}"
-                        found_flags[target] = True
-                
-                # Apply Topology Filtering (Drop linear progress features)
-                if 'data_utils.add_derived_vars(example_batch)' in line:
-                    indent = line[:len(line) - len(line.lstrip())]
-                    modified_line = line + f"{indent}example_batch = example_batch.drop_vars(['day_progress', 'year_progress'], errors='ignore')\n"
-                    print("  [OK] Injected topology filter (dropped linear progress).")
-
-                new_source.append(modified_line)
-            
-            cell['source'] = new_source
-
-    print("Patching results:")
-    for target, found in found_flags.items():
-        status = "[OK]" if found else "[WARN]"
-        print(f"  {status} Found/Patched: {target}")
-    
-    print(f"  [OK] Cleared {plot_cells_cleared} visualization cells.")
-
-    # 3. Code Injection (Diagnostic Flight Recorder & JAX compatibility)
+    # 3. Injection Code Blocks
     rehydration_code = [
-        "# DIAGNOSTIC AND COMPATIBILITY CELL (Injected by patcher)\n",
+        "# RE-HYDRATION AND COMPATIBILITY CELL (Injected by patcher)\n",
         "import numpy as np\n",
         "import xarray as xr\n",
         "import jax\n",
@@ -92,7 +50,6 @@ def patch_notebook(nb_path, target_date):
         "\n",
         "log_diag('--- Session Started ---')\n",
         "\n",
-        "# Monkey-patch legacy JAX alias\n",
         "if not hasattr(jax, 'P'):\n",
         "    jax.P = jax.sharding.PartitionSpec\n",
         "    log_diag('jax.P monkey-patched.')\n",
@@ -105,54 +62,93 @@ def patch_notebook(nb_path, target_date):
         "    log_diag('time and datetime re-hydrated.')\n"
     ]
 
-        # Inject after model load to fix task_config
-        if cell['cell_type'] == 'code' and any('ckpt = checkpoint.load(f' in line for line in cell['source']):
-            print("  [OK] Injected task_config topology fix.")
-            new_cells.append({
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": [
-                    "# TOPOLOGY FIX (Injected by patcher)\n",
-                    "log_diag(f'Original Forcings: {task_config.forcing_variables}')\n",
-                    "task_config.input_variables = tuple(v for v in task_config.input_variables if v not in ['day_progress', 'year_progress'])\n",
-                    "task_config.forcing_variables = tuple(v for v in task_config.forcing_variables if v not in ['day_progress', 'year_progress'])\n",
-                    "log_diag(f'Pruned Forcings: {task_config.forcing_variables}')\n",
-                    "log_diag(f'Inputs count: {len(task_config.input_variables)}')\n"
-                ]
-            })
+    topology_fix_code = [
+        "# TOPOLOGY FIX (Injected by patcher)\n",
+        "log_diag(f'Original Forcings: {task_config.forcing_variables}')\n",
+        "task_config.input_variables = tuple(v for v in task_config.input_variables if v not in ['day_progress', 'year_progress'])\n",
+        "task_config.forcing_variables = tuple(v for v in task_config.forcing_variables if v not in ['day_progress', 'year_progress'])\n",
+        "log_diag(f'Pruned Forcings: {task_config.forcing_variables}')\n",
+        "log_diag(f'Inputs count: {len(task_config.input_variables)}')\n"
+    ]
+
+    extraction_diag_code = [
+        "# EXTRACTION DIAGNOSTICS (Injected by patcher)\n",
+        "log_diag(f'Eval Input Vars: {list(eval_inputs.data_vars)}')\n",
+        "log_diag(f'Eval Forcing Vars: {list(eval_forcings.data_vars)}')\n"
+    ]
+
+    new_cells = []
+    for cell in nb['cells']:
+        if cell['cell_type'] == 'code':
+            # Check for visualization cells
+            if len(cell['source']) > 0 and '# @title Plot' in cell['source'][0]:
+                cell['source'] = ["# Plotting cell bypassed for headless execution\n"]
+                plot_cells_cleared += 1
+                new_cells.append(cell)
+                continue
+                
+            new_source = []
+            for line in cell['source']:
+                modified_line = line
+                
+                # Apply replacements
+                for target, replacement in replacements.items():
+                    if target in line:
+                        modified_line = modified_line.replace(target, replacement)
+                        found_flags[target] = True
+                
+                # Apply bypasses
+                for target in bypasses:
+                    if target in line and 'def ' not in line:
+                        modified_line = f"# {modified_line}"
+                        found_flags[target] = True
+                
+                # Apply In-Line Topology Filtering
+                if 'data_utils.add_derived_vars(example_batch)' in line:
+                    indent = line[:len(line) - len(line.lstrip())]
+                    modified_line = line + f"{indent}example_batch = example_batch.drop_vars(['day_progress', 'year_progress'], errors='ignore')\n"
+                    print("  [OK] Injected in-line topology filter.")
+
+                new_source.append(modified_line)
             
-        new_cells.append(cell)
-        
-        # Inject after data load
-        if cell['cell_type'] == 'code' and any('xarray.load_dataset(f)' in line for line in cell['source']):
-            print("  [OK] Injected diagnostic re-hydration cell.")
-            new_cells.append({
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": rehydration_code
-            })
+            cell['source'] = new_source
+            new_cells.append(cell)
+
+            # --- Inject new cells AFTER specific triggers ---
+            # 1. After model load
+            if any('ckpt = checkpoint.load(f' in line for line in cell['source']):
+                print("  [OK] Injected TaskConfig topology fix cell.")
+                new_cells.append({
+                    "cell_type": "code", "execution_count": None, "metadata": {},
+                    "outputs": [], "source": topology_fix_code
+                })
             
-        # Inject after feature extraction
-        if cell['cell_type'] == 'code' and any('extract_inputs_targets_forcings' in line for line in cell['source']):
-            print("  [OK] Injected post-extraction diagnostics.")
-            new_cells.append({
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": [
-                    "log_diag(f'Task Config Inputs: {task_config.input_variables}')\n",
-                    "log_diag(f'Task Config Targets: {task_config.target_variables}')\n",
-                    "log_diag(f'Task Config Forcings: {task_config.forcing_variables}')\n",
-                    "log_diag(f'Eval Input Vars: {list(eval_inputs.data_vars)}')\n",
-                    "log_diag(f'Eval Forcing Vars: {list(eval_forcings.data_vars)}')\n"
-                ]
-            })
+            # 2. After data load
+            if any('xarray.load_dataset(f)' in line for line in cell['source']):
+                print("  [OK] Injected diagnostic re-hydration cell.")
+                new_cells.append({
+                    "cell_type": "code", "execution_count": None, "metadata": {},
+                    "outputs": [], "source": rehydration_code
+                })
+                
+            # 3. After extraction
+            if any('extract_inputs_targets_forcings' in line for line in cell['source']):
+                print("  [OK] Injected post-extraction diagnostic cell.")
+                new_cells.append({
+                    "cell_type": "code", "execution_count": None, "metadata": {},
+                    "outputs": [], "source": extraction_diag_code
+                })
+        else:
+            # Markdown cells
+            new_cells.append(cell)
+
     nb['cells'] = new_cells
+
+    print("Patching results:")
+    for target, found in found_flags.items():
+        status = "[OK]" if found else "[WARN]"
+        print(f"  {status} Found/Patched: {target}")
+    print(f"  [OK] Cleared {plot_cells_cleared} visualization cells.")
 
     with open(nb_path, 'w') as f:
         json.dump(nb, f, indent=1)
